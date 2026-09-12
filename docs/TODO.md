@@ -41,11 +41,10 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] `state`: schema v1, serde, version check, missing/corrupt handling (rename aside)
 - [x] `state`: atomic write (tmp + fsync + renameat + dir fsync), explicit modes
 - [x] `identity`: mount identity matching (unique ID authoritative, fallback to reusable ID + root dev/ino)
-- [ ] `state`: move state I/O onto a state-directory descriptor (`openat`/`renameat`) once the kernel layer exists; it currently uses path-based `std::fs` within the trusted, `byssus`-owned state directory
 - [x] `membership`: entry classification (name, file type, size) with reject reasons
 - [x] `reconcile::plan`: pure planner covering all 14 decision-table rows
 - [x] `reconcile::plan`: template/root moves, removed groups, target collisions, unmount-before-mount ordering
-- [ ] `privileges::plan`: pure capability-normalization decision logic
+- [x] `privileges::plan`: pure capability-normalization decision logic
 
 ## M2 — Kernel layer
 
@@ -62,8 +61,11 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [ ] `mount`: create (`open_tree` clone, `mount_setattr`, `move_mount`, identity)
 - [ ] `mount`: attribute verification (`fstatvfs`) and in-place re-apply
 - [ ] `mount`: unmount via pinned descriptor + `/proc/self/fd`, leaf directory removal
-- [ ] `privileges`: apply normalization (capget/capset, user switch with keepcaps, bounding set, securebits, ambient clear, `no_new_privs`)
+- [ ] `privileges`: apply normalization plan (capget/capset, bounding set, securebits, user switch, ambient clear, `no_new_privs`) and verify the result
+- [ ] `privileges`: resolve service user from `/etc/passwd` and `/etc/group` (static musl has no NSS)
+- [ ] `config`: expose path checks separately so they run after privilege normalization (startup step order in DESIGN.md)
 - [ ] `lock`: state directory `flock`
+- [ ] `state`: move state I/O onto a state-directory descriptor (`openat`/`renameat`) once the kernel layer exists; it currently uses path-based `std::fs` within the trusted, `byssus`-owned state directory
 - [ ] Integration test harness: `scripts/integration-tests.sh` running tests in `unshare --user --map-root-user --mount`
 - [ ] Integration tests for each kernel-layer operation (including no-recursive-submount and attribute enforcement)
 

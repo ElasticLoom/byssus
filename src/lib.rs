@@ -18,6 +18,7 @@ pub mod identity;
 pub mod membership;
 pub mod mountinfo;
 pub mod name;
+pub mod privileges;
 pub mod reconcile;
 pub mod state;
 pub mod template;

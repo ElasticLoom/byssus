@@ -152,28 +152,38 @@ directories.
 ### Capability normalization
 
 However the process was launched, `byssusd` and `byssus reconcile` bring
-themselves to a known minimal state before reading configuration:
+themselves to a known minimal state immediately after parsing configuration
+(which is root-owned and needed to learn the service user) and before
+touching anything else:
 
-1. Read the current capability sets. If `CAP_SYS_ADMIN` is not permitted,
-   exit with a diagnostic explaining the systemd and `setcap` options.
-2. If the real or effective UID is 0:
-   - If a service user is configured (`daemon.user` or `--user`), set
-     supplementary groups, then GID, then UID to that user, preserving
-     permitted capabilities across the switch with `PR_SET_KEEPCAPS` (its one
-     legitimate use), and re-raise `CAP_SYS_ADMIN` into the effective set.
-   - Otherwise refuse to start, unless `--allow-root` is given (intended for
-     development and tests). With `--allow-root` the process stays UID 0 but
-     still drops every other capability, and logs a warning.
-3. Reduce effective and permitted sets to exactly `CAP_SYS_ADMIN`; clear the
-   inheritable and ambient sets.
-4. If `CAP_SETPCAP` is still available at this point (only when started as
-   root), additionally drop every other capability from the bounding set and
-   set and lock the securebits `NOROOT`, `NO_SETUID_FIXUP`, `KEEP_CAPS`
-   (cleared) and `NO_CAP_AMBIENT_RAISE`, before dropping `CAP_SETPCAP` itself.
-   Without `CAP_SETPCAP` (systemd or `setcap` launches) the bounding set cannot
-   be changed; `PR_SET_NO_NEW_PRIVS` below makes it irrelevant.
-5. Set `PR_SET_NO_NEW_PRIVS`, so no later `execve()` can gain privilege.
-6. Log the resulting state, for example
+1. Read the current credentials. If `CAP_SYS_ADMIN` is not permitted, exit
+   with a diagnostic explaining the systemd and `setcap` options.
+2. Decide whether to switch user. If any of the real, effective or saved UIDs
+   is 0:
+   - with a service user configured (`daemon.user` or `--user`), switch to it
+     (a service user with UID 0 is rejected);
+   - otherwise refuse to start, unless `--allow-root` is given (intended for
+     development and tests), in which case stay UID 0 with a warning.
+
+   If not running as root, a configured service user is not applied (a
+   warning is logged if the current UID differs from it).
+3. Clear the ambient set, and raise into the effective set any capability the
+   following steps use (`CAP_SETPCAP`, `CAP_SETUID`, `CAP_SETGID`).
+4. If `CAP_SETPCAP` is permitted (only when started as root): drop every
+   capability except `CAP_SYS_ADMIN` from the bounding set, then set and lock
+   the securebits `NOROOT`, `NO_SETUID_FIXUP`, `KEEP_CAPS` (cleared) and
+   `NO_CAP_AMBIENT_RAISE`. Without `CAP_SETPCAP` (systemd or `setcap`
+   launches) the bounding set cannot be changed; `PR_SET_NO_NEW_PRIVS` below
+   makes it irrelevant.
+5. If switching user: `setgroups` (primary plus supplementary groups),
+   `setresgid`, `setresuid`. `NO_SETUID_FIXUP` preserves capabilities across
+   the switch; in the unusual case that `CAP_SETPCAP` was unavailable,
+   `PR_SET_KEEPCAPS` is used for the switch instead.
+6. Set effective and permitted sets to exactly `CAP_SYS_ADMIN`, and the
+   inheritable set to empty.
+7. Set `PR_SET_NO_NEW_PRIVS`, so no later `execve()` can gain privilege.
+8. Re-read credentials and verify they match the plan exactly; exit if not.
+9. Log the resulting state, for example
    `level=info msg="privileges normalized" uid=991 caps=cap_sys_admin`.
 
 The daemon is single-threaded at this point, so per-thread credential syscalls
@@ -569,22 +579,23 @@ Additional rules:
 ### Startup
 
 1. Parse arguments; initialize logging.
-2. [Normalize privileges](#capability-normalization).
-3. Open and verify `/proc`.
-4. Probe kernel features (see [Kernel requirements](#kernel-requirements));
+2. Parse and validate configuration syntax and ownership; exit 1 on error.
+3. [Normalize privileges](#capability-normalization).
+4. Open and verify `/proc`.
+5. Probe kernel features (see [Kernel requirements](#kernel-requirements));
    exit 1 with a diagnostic if a required feature is missing.
-5. Load and fully validate configuration; exit 1 on error.
-6. Take the state lock; exit 1 if another instance holds it.
-7. Open root and membership directory descriptors for every group.
-8. Check propagation for every group's target root (see
+6. Check configured paths as the service user; exit 1 on error.
+7. Take the state lock; exit 1 if another instance holds it.
+8. Open root and membership directory descriptors for every group.
+9. Check propagation for every group's target root (see
    [Propagation](#propagation-and-mount-namespaces)).
-9. Load the state file.
-10. Install inotify watches, block the handled signals and create the
+10. Load the state file.
+11. Install inotify watches, block the handled signals and create the
     `signalfd` — **before** the initial reconcile, so no membership change
     during startup is missed.
-11. Full reconcile of every group, including cleanup of state records belonging
+12. Full reconcile of every group, including cleanup of state records belonging
     to groups no longer configured.
-12. Enter the event loop.
+13. Enter the event loop.
 
 ### Event loop
 
