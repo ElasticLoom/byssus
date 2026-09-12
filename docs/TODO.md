@@ -37,9 +37,11 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] `config`: main file + `conf.d` fragments, ordering, duplicate group detection, `[daemon]` only in main file
 - [x] `config`: path validation (absolute, no `.`/`..`), membership-not-beneath-target check
 - [x] `config`: ownership/mode checks on files and containing directories (error for daemon/reconcile, warning for status/dry-run)
-- [ ] `mountinfo`: parser (escaping, optional fields, propagation classification, lookup by mount ID)
-- [ ] `state`: schema v1, serde, version check, missing/corrupt handling (rename aside)
-- [ ] `state`: atomic write (tmp + fsync + renameat + dir fsync), explicit modes
+- [x] `mountinfo`: parser (escaping, optional fields, propagation classification, lookup by mount ID)
+- [x] `state`: schema v1, serde, version check, missing/corrupt handling (rename aside)
+- [x] `state`: atomic write (tmp + fsync + renameat + dir fsync), explicit modes
+- [x] `identity`: mount identity matching (unique ID authoritative, fallback to reusable ID + root dev/ino)
+- [ ] `state`: move state I/O onto a state-directory descriptor (`openat`/`renameat`) once the kernel layer exists; it currently uses path-based `std::fs` within the trusted, `byssus`-owned state directory
 - [ ] `membership`: entry classification (name, file type, size) with reject reasons
 - [ ] `reconcile::plan`: pure planner covering all 14 decision-table rows
 - [ ] `reconcile::plan`: template/root moves, removed groups, target collisions, unmount-before-mount ordering

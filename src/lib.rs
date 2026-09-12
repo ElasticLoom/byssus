@@ -14,7 +14,10 @@
 compile_error!("byssus relies on Linux-specific mount APIs and only builds on Linux");
 
 pub mod config;
+pub mod identity;
+pub mod mountinfo;
 pub mod name;
+pub mod state;
 pub mod template;
 
 /// The crate version, as recorded in `Cargo.toml`.

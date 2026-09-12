@@ -97,6 +97,20 @@ impl fmt::Display for AbsPath {
     }
 }
 
+impl serde::Serialize for AbsPath {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Constructed only from `&str`, so always valid UTF-8.
+        serializer.serialize_str(&self.0.to_string_lossy())
+    }
+}
+
+impl<'de> Deserialize<'de> for AbsPath {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::new(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 impl AsRef<Path> for AbsPath {
     fn as_ref(&self) -> &Path {
         &self.0
