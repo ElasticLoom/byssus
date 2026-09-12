@@ -1,0 +1,78 @@
+[package]
+name = "byssus"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Live, read-only filesystem attachments between isolated workspaces via bind mounts and mount propagation"
+authors = ["James Golovich <james@gnuinter.net>"]
+license = "Apache-2.0"
+repository = "https://github.com/ElasticLoom/byssus"
+homepage = "https://github.com/ElasticLoom/byssus"
+documentation = "https://docs.rs/byssus"
+readme = "README.md"
+keywords = ["mount", "bind-mount", "containers", "inotify", "linux"]
+categories = ["command-line-utilities", "filesystem", "os::linux-apis"]
+include = [
+    "/src/**/*.rs",
+    "/tests/**/*.rs",
+    "/contrib/**",
+    "/docs/**/*.md",
+    "/examples/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
+]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[[bin]]
+name = "byssusd"
+path = "src/bin/byssusd.rs"
+
+[[bin]]
+name = "byssus"
+path = "src/bin/byssus.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+jiff = { version = "0.2.37", default-features = false, features = ["std"] }
+libc = "0.2.189"
+rustix = { version = "1.1.4", default-features = false, features = ["std", "fs", "mount", "process", "thread", "event", "stdio"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.20"
+toml = "1.1.6"
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "fmt", "registry"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

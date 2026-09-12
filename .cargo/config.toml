@@ -1,0 +1,7 @@
+# Cross-link static musl binaries with the linker shipped in the Rust toolchain,
+# so no target C toolchain is required.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"

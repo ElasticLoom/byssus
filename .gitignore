@@ -1,0 +1,21 @@
+/target
+**/*.rs.bk
+*.profraw
+*.profdata
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Local environment and secrets — never commit
+.env
+.env.*
+*.pem
+*.key
+
+# Local agent/tooling state
+.claude/
+CLAUDE.local.md
