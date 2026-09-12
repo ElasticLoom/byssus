@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::config::AbsPath;
+use crate::config::{AbsPath, MountAttrs};
 use crate::identity::{DevIno, MountIdentity};
 use crate::name::Name;
 
@@ -49,6 +49,12 @@ pub struct MountRecord {
     pub root_dev_minor: u32,
     /// Inode number of the mount root.
     pub root_ino: u64,
+    /// `MOUNT_ATTR_RDONLY` was applied.
+    pub read_only: bool,
+    /// `MOUNT_ATTR_NOEXEC` was applied.
+    pub noexec: bool,
+    /// `MOUNT_ATTR_NOSYMFOLLOW` was applied.
+    pub nosymfollow: bool,
     /// When the mount was created.
     pub created_at: Timestamp,
 }
@@ -65,6 +71,16 @@ impl MountRecord {
                 dev_minor: self.root_dev_minor,
                 ino: self.root_ino,
             },
+        }
+    }
+
+    /// The attributes that were applied (in addition to `nosuid` and `nodev`).
+    #[must_use]
+    pub fn attrs(&self) -> MountAttrs {
+        MountAttrs {
+            read_only: self.read_only,
+            noexec: self.noexec,
+            nosymfollow: self.nosymfollow,
         }
     }
 
@@ -378,6 +394,9 @@ mod tests {
             root_dev_major: 8,
             root_dev_minor: 1,
             root_ino: 1_842_211,
+            read_only: true,
+            noexec: true,
+            nosymfollow: false,
             created_at: "2026-09-12T14:30:01Z".parse().unwrap(),
         }
     }
@@ -411,6 +430,9 @@ mod tests {
       "root_dev_major": 8,
       "root_dev_minor": 1,
       "root_ino": 1842211,
+      "read_only": true,
+      "noexec": true,
+      "nosymfollow": false,
       "created_at": "2026-09-12T14:30:01Z"
     }
   ]

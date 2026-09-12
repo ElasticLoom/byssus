@@ -91,15 +91,16 @@ pub struct ObservedAttrs {
 }
 
 impl ObservedAttrs {
-    /// Whether these observed attributes are exactly what `attrs` requires
-    /// (with `nosuid` and `nodev` always required).
+    /// Whether these observed attributes enforce at least the restrictions
+    /// `attrs` requires (with `nosuid` and `nodev` always required). Extra
+    /// restrictions — for example a read-only source mount — are acceptable.
     #[must_use]
-    pub fn satisfy(&self, attrs: &MountAttrs) -> bool {
+    pub fn enforce(&self, attrs: &MountAttrs) -> bool {
         self.nosuid
             && self.nodev
-            && self.read_only == attrs.read_only
-            && self.noexec == attrs.noexec
-            && self.nosymfollow == attrs.nosymfollow
+            && (self.read_only || !attrs.read_only)
+            && (self.noexec || !attrs.noexec)
+            && (self.nosymfollow || !attrs.nosymfollow)
     }
 }
 
@@ -164,6 +165,9 @@ pub enum UnmountReason {
     SourceChanged,
     /// The member's target collides with another member's.
     TargetCollision,
+    /// Configuration removed a restriction. Restrictions are never cleared in
+    /// place, so the mount is re-created.
+    AttributesRelaxed,
 }
 
 /// Why a record is being dropped without unmounting.
@@ -195,11 +199,12 @@ pub enum Action {
         /// Why.
         reason: DropReason,
     },
-    /// Re-apply mount attributes to an existing mount of ours.
+    /// Add missing restrictions to an existing mount of ours and record the
+    /// configured attributes. Never clears a restriction.
     Reattr {
         /// The mount's record.
         record: MountRecord,
-        /// Attributes to apply.
+        /// Configured attributes to enforce.
         attrs: MountAttrs,
     },
     /// Create a mount and record it.
@@ -587,9 +592,21 @@ fn plan_recorded_member(
     match target {
         TargetState::Mounted { identity, attrs } if identity.matches(&record.identity()) => {
             match source {
-                // Row 4: ours; fix attributes if needed.
+                // Row 4: ours. Loosened configuration needs a fresh mount;
+                // tightened configuration or drift is fixed in place.
                 SourceState::Resolved(root) if root == record.identity().root => {
-                    if attrs.is_some_and(|a| !a.satisfy(&d.attrs)) {
+                    if d.attrs.relaxes(&record.attrs()) {
+                        let id = b.push(
+                            Action::Unmount {
+                                record: record.clone(),
+                                reason: UnmountReason::AttributesRelaxed,
+                            },
+                            vec![],
+                        );
+                        b.push(Action::Mount { desired: d.clone() }, vec![id]);
+                    } else if record.attrs() != d.attrs
+                        || attrs.is_some_and(|a| !a.enforce(&d.attrs))
+                    {
                         b.push(
                             Action::Reattr {
                                 record: record.clone(),

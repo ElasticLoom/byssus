@@ -72,6 +72,9 @@ fn record_for(d: &DesiredMount, id: MountIdentity) -> MountRecord {
         root_dev_major: id.root.dev_major,
         root_dev_minor: id.root.dev_minor,
         root_ino: id.root.ino,
+        read_only: d.attrs.read_only,
+        noexec: d.attrs.noexec,
+        nosymfollow: d.attrs.nosymfollow,
         created_at: "2026-09-12T00:00:00Z".parse().unwrap(),
     }
 }
@@ -242,10 +245,6 @@ fn row4_ours_attribute_drift_reapplied() {
             noexec: false,
             ..OK_ATTRS
         },
-        ObservedAttrs {
-            nosymfollow: true,
-            ..OK_ATTRS
-        },
     ] {
         let record = record_for(&d, id);
         let p = Scenario::default()
@@ -272,11 +271,36 @@ fn row4_ours_attribute_drift_reapplied() {
 }
 
 #[test]
-fn row4_configuration_change_reapplied() {
+fn row4_extra_restrictions_tolerated() {
     let mut d = desired("g", "a");
     d.attrs.read_only = false;
     let id = ident(7, 1);
-    let record = record_for(&d, id);
+    // A read-only source mount makes the view read-only too; that is fine.
+    let p = Scenario::default()
+        .want(d.clone())
+        .record(record_for(&d, id))
+        .target(
+            d.target.clone(),
+            TargetState::Mounted {
+                identity: id,
+                attrs: Some(ObservedAttrs {
+                    nosymfollow: true,
+                    ..OK_ATTRS
+                }),
+            },
+        )
+        .source(d.key.clone(), SourceState::Resolved(dev_ino(1)))
+        .plan();
+    assert!(p.is_noop());
+}
+
+#[test]
+fn row4_tightened_configuration_reapplied() {
+    let old = desired("g", "a");
+    let mut d = old.clone();
+    d.attrs.nosymfollow = true;
+    let id = ident(7, 1);
+    let record = record_for(&old, id);
     let p = Scenario::default()
         .want(d.clone())
         .record(record.clone())
@@ -290,6 +314,32 @@ fn row4_configuration_change_reapplied() {
             attrs: d.attrs
         }]
     );
+}
+
+#[test]
+fn row4_relaxed_configuration_remounts() {
+    let old = desired("g", "a");
+    let mut d = old.clone();
+    d.attrs.read_only = false;
+    let id = ident(7, 1);
+    let record = record_for(&old, id);
+    let p = Scenario::default()
+        .want(d.clone())
+        .record(record.clone())
+        .target(d.target.clone(), mounted(id))
+        .source(d.key.clone(), SourceState::Resolved(dev_ino(1)))
+        .plan();
+    assert_eq!(
+        actions(&p),
+        [
+            &Action::Unmount {
+                record,
+                reason: UnmountReason::AttributesRelaxed
+            },
+            &Action::Mount { desired: d }
+        ]
+    );
+    assert_eq!(p.steps[1].depends_on, [0]);
 }
 
 #[test]
@@ -895,12 +945,37 @@ fn steps_ordered_by_phase_with_remapped_dependencies() {
 // --- Helpers -----------------------------------------------------------------
 
 #[test]
-fn observed_attrs_satisfy() {
-    assert!(OK_ATTRS.satisfy(&MountAttrs::default()));
-    assert!(!OK_ATTRS.satisfy(&MountAttrs {
+fn observed_attrs_enforce() {
+    assert!(OK_ATTRS.enforce(&MountAttrs::default()));
+    assert!(OK_ATTRS.enforce(&MountAttrs {
         noexec: false,
+        read_only: false,
+        nosymfollow: false,
+    }));
+    assert!(!OK_ATTRS.enforce(&MountAttrs {
+        nosymfollow: true,
         ..MountAttrs::default()
     }));
+    for missing in [
+        ObservedAttrs {
+            nosuid: false,
+            ..OK_ATTRS
+        },
+        ObservedAttrs {
+            nodev: false,
+            ..OK_ATTRS
+        },
+        ObservedAttrs {
+            read_only: false,
+            ..OK_ATTRS
+        },
+        ObservedAttrs {
+            noexec: false,
+            ..OK_ATTRS
+        },
+    ] {
+        assert!(!missing.enforce(&MountAttrs::default()), "{missing:?}");
+    }
 }
 
 #[test]

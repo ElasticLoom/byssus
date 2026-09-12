@@ -384,6 +384,9 @@ string-constructed path reaches a privileged syscall.
 5. **Set attributes**: `mount_setattr(tree_fd, "", AT_EMPTY_PATH, …)` with
    `MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV`, plus `MOUNT_ATTR_RDONLY`,
    `MOUNT_ATTR_NOEXEC` and `MOUNT_ATTR_NOSYMFOLLOW` as configured.
+   Attributes are only ever *set*, never cleared: a clone inherits its source
+   mount's restrictions (for example, a read-only source filesystem stays
+   read-only), and a view is never more permissive than its source.
 6. **Attach**: `move_mount(tree_fd, "", target_fd, "", MOVE_MOUNT_F_EMPTY_PATH
    | MOVE_MOUNT_T_EMPTY_PATH)`. Both flags are required because both paths are
    empty.
@@ -478,13 +481,18 @@ daemon's *ownership claim*; the kernel remains the authority on what exists.
       "root_dev_major": 8,
       "root_dev_minor": 1,
       "root_ino": 1842211,
+      "read_only": true,
+      "noexec": true,
+      "nosymfollow": false,
       "created_at": "2026-09-12T14:30:01Z"
     }
   ]
 }
 ```
 
-`mnt_id_unique` is omitted when the kernel does not support it.
+`mnt_id_unique` is omitted when the kernel does not support it. `read_only`,
+`noexec` and `nosymfollow` record the configurable attributes that were
+applied.
 
 **Three sources of truth:**
 
@@ -539,7 +547,7 @@ new location. The old mount is removed before the new one is created.
 | 1 | yes | no | no | — | resolves | **Create**; record identity. |
 | 2 | yes | no | no | — | fails | Skip, `warn` (source missing or inaccessible). Retried on resync. |
 | 3 | yes | no | yes | — | — | **Conflict** (foreign mount at target). Log, do not touch. |
-| 4 | yes | yes | yes | match | same | Ours. Verify mount attributes; re-apply with `mount_setattr` if they drifted or configuration changed. |
+| 4 | yes | yes | yes | match | same | Ours. If configuration *removed* a restriction the record shows was applied: **unmount, then create**. Otherwise, if configuration added a restriction or the mount lacks a required one: **add the missing restrictions** in place with `mount_setattr` and update the record. |
 | 5 | yes | yes | yes | match | changed | Source replaced: **unmount, then create**. |
 | 6 | yes | yes | yes | match | fails | Source gone: **unmount**, remove record, `warn`. |
 | 7 | yes | yes | yes | mismatch | — | **Conflict** (target replaced). Log, do not touch; keep record. |
