@@ -13,5 +13,9 @@
 #[cfg(not(target_os = "linux"))]
 compile_error!("byssus relies on Linux-specific mount APIs and only builds on Linux");
 
+pub mod config;
+pub mod name;
+pub mod template;
+
 /// The crate version, as recorded in `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

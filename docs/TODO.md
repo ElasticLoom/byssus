@@ -31,12 +31,12 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 
 ## M1 — Unprivileged core (pure logic, fully unit-tested)
 
-- [ ] `name`: name allowlist validation
-- [ ] `template`: template parsing, validation and interpolation
-- [ ] `config`: TOML schema, defaults, `deny_unknown_fields`
-- [ ] `config`: main file + `conf.d` fragments, ordering, duplicate group detection, `[daemon]` only in main file
-- [ ] `config`: path validation (absolute, no `.`/`..`), membership-not-beneath-target check
-- [ ] `config`: ownership/mode checks on files and containing directories (error for daemon/reconcile, warning for status/dry-run)
+- [x] `name`: name allowlist validation
+- [x] `template`: template parsing, validation and interpolation
+- [x] `config`: TOML schema, defaults, `deny_unknown_fields`
+- [x] `config`: main file + `conf.d` fragments, ordering, duplicate group detection, `[daemon]` only in main file
+- [x] `config`: path validation (absolute, no `.`/`..`), membership-not-beneath-target check
+- [x] `config`: ownership/mode checks on files and containing directories (error for daemon/reconcile, warning for status/dry-run)
 - [ ] `mountinfo`: parser (escaping, optional fields, propagation classification, lookup by mount ID)
 - [ ] `state`: schema v1, serde, version check, missing/corrupt handling (rename aside)
 - [ ] `state`: atomic write (tmp + fsync + renameat + dir fsync), explicit modes
