@@ -42,9 +42,9 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] `state`: atomic write (tmp + fsync + renameat + dir fsync), explicit modes
 - [x] `identity`: mount identity matching (unique ID authoritative, fallback to reusable ID + root dev/ino)
 - [ ] `state`: move state I/O onto a state-directory descriptor (`openat`/`renameat`) once the kernel layer exists; it currently uses path-based `std::fs` within the trusted, `byssus`-owned state directory
-- [ ] `membership`: entry classification (name, file type, size) with reject reasons
-- [ ] `reconcile::plan`: pure planner covering all 14 decision-table rows
-- [ ] `reconcile::plan`: template/root moves, removed groups, target collisions, unmount-before-mount ordering
+- [x] `membership`: entry classification (name, file type, size) with reject reasons
+- [x] `reconcile::plan`: pure planner covering all 14 decision-table rows
+- [x] `reconcile::plan`: template/root moves, removed groups, target collisions, unmount-before-mount ordering
 - [ ] `privileges::plan`: pure capability-normalization decision logic
 
 ## M2 — Kernel layer
@@ -69,7 +69,8 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 
 ## M3 — Reconciler and CLI
 
-- [ ] `reconcile::observe`: gather membership, state and kernel observations per group
+- [ ] `reconcile::observe`: gather membership, state and kernel observations for all groups
+- [ ] `reconcile::observe`: alias-aware target collision detection (compare target roots by device/inode, not only by configured path string)
 - [ ] `reconcile::execute`: apply planned actions, per-member error isolation, state writes
 - [ ] Structured logfmt logging (journal detection, all required fields)
 - [ ] `byssus version`
@@ -83,7 +84,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [ ] `byssusd` argument parsing
 - [ ] Startup sequence (privileges → /proc → probes → config → lock → descriptors → propagation → state → watches/signals → reconcile)
 - [ ] `epoll` event loop: inotify, signalfd, resync timeout
-- [ ] inotify event handling: drain, per-group coalescing, overflow → full reconcile
+- [ ] inotify event handling: drain, coalesce into one pass, overflow → full reconcile
 - [ ] Degraded groups on membership directory deletion/move
 - [ ] Transactional `SIGHUP` reload
 - [ ] Clean shutdown on `SIGTERM`/`SIGINT` (state write, no unmount)

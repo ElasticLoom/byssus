@@ -507,8 +507,9 @@ if the daemon holds it, so two writers never race.
 
 ## Reconciliation
 
-Reconciliation runs per group and compares, for every member name that is
-either desired or recorded:
+Each reconciliation pass covers every configured, non-degraded group (so
+cross-group target collisions are always visible) and compares, for every
+member name that is either desired or recorded:
 
 - **M** — a valid membership file exists (and the group is in configuration);
 - **S** — a state record exists for `(group, name)` whose recorded roots and
@@ -542,9 +543,20 @@ new location. The old mount is removed before the new one is created.
 
 Additional rules:
 
-- **Target collisions:** if two desired members (in any groups) resolve to the
-  same target directory, both are reported as conflicts and neither is
-  mounted.
+- **Target collisions:** if several desired members (in any groups) resolve to
+  the same target, a collision is reported. If one of them is already mounted
+  there as a verified Byssus mount, it is kept; otherwise none is mounted.
+  Members excluded by a collision are treated as non-members, so their mounts
+  elsewhere are removed.
+- **Relocation:** when a member's source or target location changes, its old
+  mount is removed before the new one is created. If the old mount cannot be
+  inspected, the move is blocked (and reported) rather than losing track of
+  the old mount.
+- **Freed targets:** a member may mount at a target currently occupied by a
+  Byssus mount that the same pass removes; the mount waits for that unmount.
+- **Dependencies:** a mount that depends on an unmount (source changed,
+  relocation, freed target) is skipped if that unmount fails.
+- **Degraded groups:** records of degraded groups are left untouched.
 - **Ordering:** within a pass, unmounts run before mounts.
 - **Failures are local:** an error on one member is logged and does not abort
   reconciliation of other members or groups.
@@ -576,8 +588,8 @@ Additional rules:
 
 ### Event loop
 
-- **inotify readable:** drain all pending events, collect the set of affected
-  groups, and reconcile each once. Watched events: `IN_CREATE`, `IN_DELETE`,
+- **inotify readable:** drain all pending events, then run one reconciliation
+  pass. Watched events: `IN_CREATE`, `IN_DELETE`,
   `IN_MOVED_FROM`, `IN_MOVED_TO`, `IN_CLOSE_WRITE`, `IN_ATTRIB`,
   `IN_DELETE_SELF`, `IN_MOVE_SELF`. Reconciliation always re-reads the
   directory, so bursts of changes converge regardless of event ordering.

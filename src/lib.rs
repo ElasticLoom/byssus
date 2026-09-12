@@ -15,8 +15,10 @@ compile_error!("byssus relies on Linux-specific mount APIs and only builds on Li
 
 pub mod config;
 pub mod identity;
+pub mod membership;
 pub mod mountinfo;
 pub mod name;
+pub mod reconcile;
 pub mod state;
 pub mod template;
 
