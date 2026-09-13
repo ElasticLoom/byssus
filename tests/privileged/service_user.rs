@@ -294,5 +294,29 @@ fn group_directories_unreadable_by_service_user_are_reported() {
     let report = text(&out.stdout);
     assert!(report.contains("set/acme/a  state=mounted"), "{report}");
     assert!(!report.contains("group_unavailable"), "{report}");
+
+    // Another non-root user sees the kernel's view with no warnings about
+    // not switching to the service user.
+    let other_uid = SERVICE_UID + 1;
+    let out = {
+        use std::os::unix::process::CommandExt as _;
+        std::process::Command::new(bin("byssus"))
+            .args(d.config_args())
+            .arg("status")
+            .uid(other_uid)
+            .gid(other_uid)
+            .output()
+            .unwrap()
+    };
+    let report = text(&out.stdout);
+    assert!(
+        report.contains(&format!("checked_as_uid = {other_uid}\n")),
+        "{report}"
+    );
+    assert!(
+        report.contains("set/acme/a  state=mounted_ownership_unknown"),
+        "{report}"
+    );
+    assert_eq!(text(&out.stderr), "", "unexpected diagnostics");
     assert_eq!(daemon.stop(), 0);
 }

@@ -78,6 +78,25 @@ pub fn normalize_privileges(
     user: Option<&str>,
     allow_root: bool,
 ) -> anyhow::Result<PrivilegePlan> {
+    normalize(goal, user, allow_root, true)
+}
+
+/// Drops every capability and, when root, switches to the service user, for
+/// read-only commands that inspect access as the daemon would.
+///
+/// Unlike [`normalize_privileges`], logs no warnings about staying root or
+/// not switching user: callers report which UID they checked as, and a
+/// non-root user running them cannot switch anyway.
+pub fn drop_to_service_user(user: Option<&str>) -> anyhow::Result<PrivilegePlan> {
+    normalize(Goal::DropAll, user, true, false)
+}
+
+fn normalize(
+    goal: Goal,
+    user: Option<&str>,
+    allow_root: bool,
+    log_warnings: bool,
+) -> anyhow::Result<PrivilegePlan> {
     let status = apply::ProcStatus::read_self().context("cannot read /proc/self/status")?;
     let credentials = status.credentials();
     let is_root = credentials.uids.contains(&0);
@@ -86,7 +105,9 @@ pub fn normalize_privileges(
             Ok(u) => Some(u),
             Err(e) if is_root => return Err(e).context("cannot resolve service user"),
             Err(e) => {
-                tracing::warn!(msg = "cannot resolve configured service user", user = name, error = %e);
+                if log_warnings {
+                    tracing::warn!(msg = "cannot resolve configured service user", user = name, error = %e);
+                }
                 None
             }
         },
@@ -98,7 +119,7 @@ pub fn normalize_privileges(
         allow_root,
     };
     let plan = privplan::plan(&credentials, &request)?;
-    for warning in &plan.warnings {
+    for warning in plan.warnings.iter().filter(|_| log_warnings) {
         match warning {
             Warning::RunningAsRoot => tracing::warn!(
                 msg = "running as root because --allow-root was given; configure a service user for production"

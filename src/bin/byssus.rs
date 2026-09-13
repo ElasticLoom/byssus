@@ -281,21 +281,19 @@ fn status(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
     // directories the daemon cannot read show as unavailable rather than as
     // members about to be mounted.
     let mut notes = Vec::new();
-    let checked_as_uid =
-        match app::normalize_privileges(Goal::DropAll, config.daemon.user.as_deref(), true) {
-            Ok(plan) => {
-                if plan.final_uid == 0 {
-                    notes.push(ROOT_WITHOUT_USER_WARNING.to_owned());
-                }
-                Some(plan.final_uid)
+    let checked_as_uid = match app::drop_to_service_user(config.daemon.user.as_deref()) {
+        Ok(plan) => {
+            if plan.final_uid == 0 {
+                notes.push(ROOT_WITHOUT_USER_WARNING.to_owned());
             }
-            Err(e) => {
-                notes.push(format!("{e:#}; showing access as the current user"));
-                app::normalize_privileges(Goal::DropAll, None, true)
-                    .context("cannot drop capabilities")?;
-                None
-            }
-        };
+            Some(plan.final_uid)
+        }
+        Err(e) => {
+            notes.push(format!("{e:#}; showing access as the current user"));
+            app::drop_to_service_user(None).context("cannot drop capabilities")?;
+            None
+        }
+    };
 
     let (state, ownership_known, state_notes, state_file) = load_state_read_only(&config);
     notes.extend(state_notes);
@@ -427,7 +425,7 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
         checks.push(Check::new("config", Level::Warn, issue.to_string()));
     }
 
-    match app::normalize_privileges(Goal::DropAll, config.daemon.user.as_deref(), true) {
+    match app::drop_to_service_user(config.daemon.user.as_deref()) {
         Ok(plan) if plan.final_uid == 0 => checks.push(Check::new(
             "privileges",
             Level::Warn,
@@ -441,8 +439,7 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
         Err(e) => {
             checks.push(Check::new("privileges", Level::Error, format!("{e:#}")));
             // Still drop every capability before inspecting anything.
-            app::normalize_privileges(Goal::DropAll, None, true)
-                .context("cannot drop capabilities")?;
+            app::drop_to_service_user(None).context("cannot drop capabilities")?;
         }
     }
 
@@ -759,7 +756,7 @@ fn check(
         .extend(config.group_sets.keys().map(reconcile::set_label));
 
     // Check access as the daemon would: as the service user when run as root.
-    let plan = app::normalize_privileges(Goal::DropAll, config.daemon.user.as_deref(), true)
+    let plan = app::drop_to_service_user(config.daemon.user.as_deref())
         .context("cannot drop privileges for checking")?;
     report.checked_as_uid = Some(plan.final_uid);
     if plan.final_uid == 0 {
