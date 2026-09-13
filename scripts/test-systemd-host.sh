@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end test of the Debian package and hardened systemd unit on a real
 # systemd host, as root. Intended for disposable CI runners and VMs: it
-# installs the package, creates /srv/byssus-e2e, mounts, and starts byssusd.
+# installs the package, creates /srv/byssus-e2e and a byssus-e2e-app user,
+# mounts, and starts byssusd.
 #
 # Usage: sudo BYSSUS_E2E_DISPOSABLE_HOST=1 scripts/test-systemd-host.sh [DEB]
 set -euo pipefail
@@ -34,7 +35,7 @@ wait_for() {
 }
 cleanup() {
     systemctl stop byssusd >/dev/null 2>&1 || true
-    for m in "$root/consumer" "$root/groups"; do
+    for m in "$root/consumer" "$root/set-consumer" "$root/groups" "$root/orgs"; do
         umount -R -l "$m" >/dev/null 2>&1 || true
     done
 }
@@ -115,6 +116,76 @@ wait_for "status recovered" sh -c "! systemctl show -p StatusText --value byssus
 step "leaving removes the mount"
 rm "$root/membership/demo/beta"
 wait_for "beta gone" sh -c "! test -e '$root/consumer/beta/README'"
+
+step "a group set: groups created at runtime by an unprivileged application"
+command -v setfacl >/dev/null || fail "setfacl not found (install the acl package)"
+app=byssus-e2e-app
+id -u "$app" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$app"
+as_app() { runuser -u "$app" -- "$@"; }
+m="$root/set-membership"
+mkdir -p "$root/orgs" "$root/set-consumer"
+chmod 0755 "$root/orgs"
+mount --bind "$root/orgs" "$root/orgs"
+mount --make-shared "$root/orgs"
+install -d -o "$app" -g "$app" -m 0755 "$root/orgs/acme" "$root/orgs/beta"
+install -d -o "$app" -g "$app" -m 0750 "$m"
+setfacl    -m u:byssus:rx "$m"
+setfacl -d -m u:byssus:rx "$m"
+for project in acme/webapp acme/api beta/secret; do
+    as_app mkdir -p "$root/orgs/${project%/*}/projects/${project#*/}/workspace"
+    echo "I am $project" | as_app tee "$root/orgs/${project%/*}/projects/${project#*/}/workspace/README" >/dev/null
+done
+install -m 0644 /dev/stdin /etc/byssus/conf.d/orgs.toml <<CONFIG
+[group_sets.projects]
+membership_root = "$m"
+source_root     = "$root/orgs"
+source          = "{group}/projects/{name}/workspace"
+target_root     = "$root/orgs"
+target          = "{group}/groups/{subgroup}/view/{name}"
+CONFIG
+byssus check || fail "byssus check with a group set"
+reloads="$(journalctl -u byssusd --no-pager | grep -c 'configuration reloaded' || true)"
+systemctl reload byssusd
+wait_for "group set reload logged" sh -c "[ \"\$(journalctl -u byssusd --no-pager | grep -c 'configuration reloaded')\" -gt $reloads ]"
+
+# Everything from here to removal runs as the application, without root.
+view="$root/orgs/acme/groups/research/view"
+as_app mkdir -p "$view"
+as_app setfacl -m u:byssus:rwx "$view"
+mount --bind "$view" "$root/set-consumer"
+mount -o remount,bind,ro "$root/set-consumer"
+mount --make-rslave "$root/set-consumer"
+as_app mkdir -p "$m/acme/research"
+as_app touch "$m/acme/research/webapp"
+wait_for "webapp visible in acme/research" test -f "$root/set-consumer/webapp/README"
+[[ "$(cat "$root/set-consumer/webapp/README")" == "I am acme/webapp" ]] || fail "wrong set member content"
+if (echo x > "$root/set-consumer/webapp/new") 2>/dev/null; then fail "set consumer could write"; fi
+
+# A member name that exists only in another org is never mounted.
+as_app touch "$m/acme/research/secret"
+wait_for "secret skipped" sh -c "journalctl -u byssusd --no-pager | grep -q 'op=skip group=projects/acme/research name=secret'"
+test -e "$root/set-consumer/secret/README" && fail "another org's project was exposed"
+byssus status | grep -q 'projects/acme/research/secret  state=source_unavailable' || fail "status for cross-org member"
+as_app rm "$m/acme/research/secret"
+
+# A group prepared under a hidden name and renamed into place, with its own view.
+as_app mkdir -p "$root/orgs/acme/groups/monitoring/view"
+as_app setfacl -m u:byssus:rwx "$root/orgs/acme/groups/monitoring/view"
+as_app mkdir "$m/acme/.monitoring.tmp"
+as_app touch "$m/acme/.monitoring.tmp/api"
+as_app mv "$m/acme/.monitoring.tmp" "$m/acme/monitoring"
+wait_for "api visible in acme/monitoring" test -f "$root/orgs/acme/groups/monitoring/view/api/README"
+test -e "$root/set-consumer/api" && fail "groups share a view"
+byssus status | grep -q 'projects/acme/research/webapp  state=mounted' || fail "status for set member"
+wait_for "status counts set groups" sh -c "systemctl show -p StatusText --value byssusd | grep -q '^3 group(s), 3 mount(s)$'"
+
+# Removing group directories removes the groups and their mounts.
+as_app rm -r "$m/acme/research" "$m/acme/monitoring"
+wait_for "webapp gone" sh -c "! test -e '$root/set-consumer/webapp/README'"
+wait_for "api gone" sh -c "! test -e '$root/orgs/acme/groups/monitoring/view/api/README'"
+wait_for "status back to the static group" sh -c "systemctl show -p StatusText --value byssusd | grep -q '^1 group(s), 1 mount(s)$'"
+umount "$root/set-consumer"
+as_app rmdir "$view" "$root/orgs/acme/groups/monitoring/view"
 
 step "restart preserves mounts"
 systemctl restart byssusd

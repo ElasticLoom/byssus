@@ -39,16 +39,23 @@ PG="\$(mktemp -d)"
 mount -t tmpfs byssus-playground "\$PG"
 cd "\$PG"
 
-mkdir -p etc/conf.d state members groups container
+mkdir -p etc/conf.d state members groups container orgs set-members container-research
 for m in libcurl openssl zlib; do
     mkdir -p "src/\$m/workspace"
     echo "Hello from \$m" > "src/\$m/workspace/README"
+done
+for p in acme/webapp acme/api beta/secret; do
+    mkdir -p "orgs/\${p%/*}/projects/\${p#*/}/workspace"
+    echo "Hello from \$p" > "orgs/\${p%/*}/projects/\${p#*/}/workspace/README"
 done
 
 # Shared propagation anchor holding the view.
 mount --bind groups groups
 mount --make-shared groups
 mkdir groups/view
+mount --bind orgs orgs
+mount --make-shared orgs
+mkdir -p orgs/acme/groups/research/view
 
 cat > etc/byssus.toml <<CONFIG
 [daemon]
@@ -61,11 +68,21 @@ source      = "{name}/workspace"
 target_root = "\$PG/groups/view"
 target      = "{name}"
 membership  = "\$PG/members"
+
+# Groups created at runtime: set-members/<org>/<group>/ is a group.
+[group_sets.projects]
+membership_root = "\$PG/set-members"
+source_root     = "\$PG/orgs"
+source          = "{group}/projects/{name}/workspace"
+target_root     = "\$PG/orgs"
+target          = "{group}/groups/{subgroup}/view/{name}"
 CONFIG
 
 # A simulated container: the view bound with rslave propagation.
 mount --bind groups/view container
 mount --make-rslave container
+mount --bind orgs/acme/groups/research/view container-research
+mount --make-rslave container-research
 
 "\$BIN/byssusd" --config etc/byssus.toml --config-dir etc/conf.d --allow-root 2>daemon.log &
 BYSSUSD_PID=\$!
@@ -79,6 +96,11 @@ set +e
 byssus()  { "\$BIN/byssus" --config "\$PG/etc/byssus.toml" --config-dir "\$PG/etc/conf.d" "\$@"; }
 join()    { touch "\$PG/members/\$1" && sleep 0.3 && ls "\$PG/container"; }
 leave()   { rm -f "\$PG/members/\$1" && sleep 0.3 && ls "\$PG/container"; }
+view()    { echo "\$PG/orgs/\${1%/*}/groups/\${1#*/}/view"; }
+mkgroup() { mkdir -p "\$(view "\$1")" "\$PG/set-members/\$1"; }
+rmgroup() { rm -r "\$PG/set-members/\$1" && sleep 0.3 && ls "\$(view "\$1")"; }
+gjoin()   { touch "\$PG/set-members/\$1/\$2" && sleep 0.3 && ls "\$(view "\$1")"; }
+gleave()  { rm -f "\$PG/set-members/\$1/\$2" && sleep 0.3 && ls "\$(view "\$1")"; }
 logs()    { tail -n 50 -f "\$PG/daemon.log"; }
 reload()  { kill -HUP \$BYSSUSD_PID; }
 restart() { kill \$BYSSUSD_PID; wait \$BYSSUSD_PID; "\$BIN/byssusd" --config "\$PG/etc/byssus.toml" --config-dir "\$PG/etc/conf.d" --allow-root 2>>"\$PG/daemon.log" & BYSSUSD_PID=\$!; }
@@ -90,11 +112,22 @@ Byssus playground in \$PG (a tmpfs; nothing touches the host)
   members/               membership directory (touch/rm files here)
   groups/view/           target root (shared propagation)
   container/             simulated container view (rslave)
+  orgs/<org>/projects/<name>/workspace
+                         group set sources: acme/webapp, acme/api, beta/secret
+  set-members/<org>/<group>/
+                         group set membership: mkdir a group, touch members
+  orgs/<org>/groups/<group>/view/
+                         each group's view
+  container-research/    simulated container for acme/research's view
   etc/byssus.toml        configuration (edit, then: reload)
   daemon.log             byssusd log
 
 Helpers:
   join NAME / leave NAME   add or remove a member, then list the container view
+  mkgroup ORG/GROUP        create a group in the set (view + directory)
+  rmgroup ORG/GROUP        remove a group (its mounts go too)
+  gjoin ORG/GROUP NAME     add a member to a set group, then list its view
+  gleave ORG/GROUP NAME    remove a member from a set group
   byssus status|dry-run    run the CLI against this deployment
   logs                     follow the daemon log (Ctrl-C to stop)
   reload                   send SIGHUP to byssusd
@@ -109,6 +142,12 @@ Things to try:
   touch members/.tmp; byssus status          # ignored hidden entry
   mkdir src/libcurl/workspace/sub; mount -t tmpfs t src/libcurl/workspace/sub
   touch src/libcurl/workspace/sub/secret; ls container/libcurl/sub   # not exposed
+
+Group sets (groups created at runtime, no reload):
+  mkgroup acme/research; gjoin acme/research webapp; cat container-research/webapp/README
+  gjoin acme/research secret; byssus status   # beta's project: source_unavailable
+  mkgroup acme/monitoring; gjoin acme/monitoring api; ls container-research   # separate view
+  rmgroup acme/research; ls container-research                                 # gone
 HELP
 }
 PS1='(byssus-playground) \w\\$ '

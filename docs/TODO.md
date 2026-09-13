@@ -112,7 +112,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Documentation (REFERENCE, DESIGN, INTEGRATION, OPERATIONS, DECISIONS) and example
 - [ ] Propagation check for each discovered group's target: only a set's `target_root` is checked at startup and reload, so a view on a separate, non-shared mount beneath it is not reported
 - [ ] Automatic recovery of degraded sets when `membership_root` reappears (currently requires SIGHUP, as for static groups)
-- [ ] Group sets in `scripts/playground.sh` and in the systemd host test (`scripts/test-systemd-host.sh`)
+- [x] Group sets in `scripts/playground.sh` and in the systemd host test (`scripts/test-systemd-host.sh`: an unprivileged application user creates groups, members and views; org confinement; removal)
 
 ## M5 — Deployment artifacts and documentation
 
