@@ -89,6 +89,9 @@ pub enum InterpolateError {
     /// The interpolated path exceeds `PATH_MAX`.
     #[error("interpolated path is {0} bytes long; the maximum is {MAX_PATH_LEN}")]
     PathTooLong(usize),
+    /// An interpolated component is empty, `.` or `..`, or contains `/`.
+    #[error("interpolated path component '{0}' is not a plain name")]
+    InvalidComponent(String),
 }
 
 impl Template {
@@ -169,8 +172,16 @@ impl Template {
             if component.len() > MAX_NAME_LEN {
                 return Err(InterpolateError::ComponentTooLong(component.len()));
             }
-            // Defense in depth: a valid name can never produce these.
-            debug_assert!(component != "." && component != ".." && !component.contains('/'));
+            // Defense in depth: valid names and templates never produce these,
+            // and RESOLVE_BENEATH would not stop one member reaching another's
+            // directory beneath the same root.
+            if component.is_empty()
+                || component == "."
+                || component == ".."
+                || component.contains('/')
+            {
+                return Err(InterpolateError::InvalidComponent(component));
+            }
             total += component.len() + usize::from(!out.is_empty());
             out.push(component);
         }

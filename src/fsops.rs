@@ -88,7 +88,12 @@ pub fn ensure_dirs_beneath(root: BorrowedFd<'_>, components: &[String]) -> io::R
 }
 
 fn ensure_one(parent: BorrowedFd<'_>, component: &str) -> io::Result<OwnedFd> {
-    debug_assert!(!component.contains('/') && component != "." && component != "..");
+    if component.is_empty() || component == "." || component == ".." || component.contains('/') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("'{component}' is not a plain directory name"),
+        ));
+    }
     match rustix::fs::mkdirat(parent, component, Mode::from_raw_mode(0o755)) {
         Ok(()) | Err(rustix::io::Errno::EXIST) => {}
         Err(e) => return Err(e.into()),
@@ -240,6 +245,19 @@ mod tests {
         let b = ensure_dirs_beneath(r.as_fd(), &comps).unwrap();
         assert_eq!(dev_ino(a.as_fd()).unwrap(), dev_ino(b.as_fd()).unwrap());
         assert!(ensure_dirs_beneath(r.as_fd(), &[]).is_err());
+    }
+
+    #[test]
+    fn ensure_dirs_refuses_non_plain_components() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        let sub = open_root(&dir.path().join("sub")).unwrap();
+        for bad in ["", ".", "..", "a/b", "../escape"] {
+            let err = ensure_dirs_beneath(sub.as_fd(), &[bad.into()]).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{bad:?}");
+        }
+        assert!(!dir.path().join("escape").exists());
+        assert_eq!(fs::read_dir(dir.path().join("sub")).unwrap().count(), 0);
     }
 
     #[test]
