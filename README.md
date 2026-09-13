@@ -73,6 +73,17 @@ target      = "{name}"
 membership  = "/srv/example/membership/research"
 ```
 
+## Try it
+
+On Linux 5.12+, without root:
+
+```bash
+scripts/playground.sh
+```
+
+This opens a shell in a throwaway namespace with a sample deployment, a
+simulated container and `byssusd` running. Type `help` for things to try.
+
 ## Documentation
 
 - [Operations guide](docs/OPERATIONS.md) — installation, permissions, systemd, containers, troubleshooting

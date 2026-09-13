@@ -28,6 +28,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [ ] Branch protection on `main` requiring CI (repository settings; manual)
 - [ ] `CODE_OF_CONDUCT.md` (decide on text, e.g. Contributor Covenant)
 - [x] Issue and pull request templates
+- [x] `scripts/playground.sh`: interactive namespace playground
 
 ## M1 — Unprivileged core (pure logic, fully unit-tested)
 

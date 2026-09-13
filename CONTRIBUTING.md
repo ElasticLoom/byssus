@@ -43,6 +43,18 @@ Extra arguments are passed to the test binary, for example
 namespaces are disabled (for example by AppArmor on Ubuntu 24.04), the script
 explains how to enable them for a local run.
 
+### Playground
+
+To try Byssus by hand, start an interactive shell with a sample deployment, a
+simulated container and `byssusd` running — no root needed, and everything is
+torn down on exit:
+
+```bash
+scripts/playground.sh
+```
+
+Type `help` inside for the layout, helper commands and things to try.
+
 ## Guidelines
 
 - **No silent gaps.** If a change leaves something incomplete, stubbed or
