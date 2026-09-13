@@ -121,6 +121,26 @@ install -d -o app -g app -m 0750 /srv/example/membership/research
 setfacl -m u:byssus:rx /srv/example/membership/research
 ```
 
+### Group set membership
+
+For a [group set](REFERENCE.md#configuration), the application creates group
+directories at runtime beneath `membership_root`. Give `byssus` read and
+search access to the root and, through a default ACL, to every directory
+created beneath it:
+
+```bash
+install -d -o app -g app -m 0750 /srv/example/membership/projects
+setfacl    -m u:byssus:rx /srv/example/membership/projects
+setfacl -d -m u:byssus:rx /srv/example/membership/projects
+```
+
+The target root of a set usually spans many views (for example
+`/srv/example/orgs`, with views at `<org>/groups/<group>/view`). `byssus` needs
+write access to each view to create its member directories, or to a parent
+if views should be created on demand. The application can grant it when it
+creates a view (`setfacl -m u:byssus:rwx <view>`), or a default ACL on a parent
+can.
+
 ### Source directories
 
 `byssus` needs **search** (`x`) permission on every directory from `/` down to
@@ -181,6 +201,10 @@ Copy and edit the examples:
 install -o root -g root -m 0644 examples/byssus.toml /etc/byssus/byssus.toml
 install -o root -g root -m 0644 examples/conf.d/research.toml /etc/byssus/conf.d/research.toml
 ```
+
+For groups that your application creates at runtime, start from
+`examples/conf.d/projects.toml` (a group set) instead; see
+[INTEGRATION.md](INTEGRATION.md#groups-created-at-runtime-group-sets).
 
 Configuration files and their directories must be owned by root and not group-
 or world-writable; `byssusd` refuses to start otherwise. See
@@ -314,7 +338,10 @@ container runtimes start.
 | `op=conflict ... several members resolve to the same target` | Two members (possibly in different groups) map to one target. Adjust templates. |
 | `private (mounts will not reach containers via rslave)` | The target root is not on a shared mount. See [Create the propagation anchor](#create-the-propagation-anchor). |
 | `are slave mounts ... refusing to start` | `byssusd` is running in its own mount namespace — usually a systemd option such as `ProtectSystem=`, `PrivateTmp=`, `PrivateNetwork=` or `PrivateIPC=`. Remove it. |
-| `op=degrade` | A membership directory was moved, deleted or unmounted. Mounts are kept. Restore the directory and `systemctl reload byssusd`. |
+| `op=degrade` | A membership directory, or a group set's `membership_root` (`group=<set>/*`), was moved, deleted or unmounted. Mounts are kept. Restore the directory and `systemctl reload byssusd`. |
+| `op=reject group=<set>/* ...` | An entry in a group set's directory tree is not a directory with a valid name. Rename or remove it. |
+| A group set's group directory exists but nothing changes, with `op=scan ... membership directory unreadable` | `byssus` lacks read or search access to that directory or its parent; the group is left unchanged until it can be read. Add the default ACL shown in [Group set membership](#group-set-membership). |
+| Members of a newly created group fail with `Permission denied` on the target | `byssus` cannot create the member directory in the view. Grant it write access to the view (or create the view with an ACL for it). |
 | `state file is corrupt` | The corrupt file was renamed to `state.json.corrupt-<time>`. Existing Byssus mounts now show as conflicts; unmount them manually (or reboot), then let Byssus re-create them. |
 | `another Byssus process holds the state lock` | `byssusd` is running; use `systemctl reload byssusd` instead of `byssus reconcile`. |
 | `refusing to run as root` | Configure `daemon.user` (or `--user`), or run under the shipped systemd unit. |

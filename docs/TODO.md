@@ -100,6 +100,20 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] systemd readiness notification (`Type=notify`, `sd_notify` READY/RELOADING/STOPPING, `STATUS=` with counts and rejected reloads) so dependent units start after the initial reconcile
 - [ ] Automatic recovery of degraded groups when the membership directory reappears (currently requires SIGHUP)
 
+## M4.1 — Group sets
+
+- [x] `GroupId`: static groups and set groups (`set/group`, `set/group/subgroup`) in state, logs and CLI output
+- [x] `[group_sets.<name>]` configuration: `{group}`/`{subgroup}` placeholders, depth inference, every level required in `target`, membership overlap checks
+- [x] Discovery of set groups on every pass (descriptor-confined, rejected entries, unavailable levels frozen)
+- [x] Dynamic inotify watches for set group and intermediate directories, followed across replacement
+- [x] Degraded sets on `membership_root` loss; lost group directories remove their groups
+- [x] CLI: `status`, `dry-run`, `check` and `reconcile` with sets
+- [x] Integration tests: runtime creation and removal of groups and subgroups, org confinement, replaced directories, rejected entries, lost root, restart no-op, one-level sets
+- [x] Documentation (REFERENCE, DESIGN, INTEGRATION, OPERATIONS, DECISIONS) and example
+- [ ] Propagation check for each discovered group's target: only a set's `target_root` is checked at startup and reload, so a view on a separate, non-shared mount beneath it is not reported
+- [ ] Automatic recovery of degraded sets when `membership_root` reappears (currently requires SIGHUP, as for static groups)
+- [ ] Group sets in `scripts/playground.sh` and in the systemd host test (`scripts/test-systemd-host.sh`)
+
 ## M5 — Deployment artifacts and documentation
 
 - [x] `contrib/systemd/byssusd.service` (no namespace-creating options; each option checked against systemd 255 `systemd.exec(5)`; `systemd-analyze security` exposure 2.6; seccomp filter exercised by running the unit tests under it via `systemd-run --user`)

@@ -1450,6 +1450,11 @@ membership = "/b"
                 include_str!("../examples/conf.d/research.toml"),
                 false,
             ),
+            (
+                Path::new("examples/conf.d/projects.toml"),
+                include_str!("../examples/conf.d/projects.toml"),
+                false,
+            ),
         ])
         .unwrap();
         assert!(loaded.warnings.is_empty());
@@ -1459,6 +1464,10 @@ membership = "/b"
                 .config
                 .groups
                 .contains_key(&Name::new("research").unwrap())
+        );
+        assert_eq!(
+            loaded.config.group_sets[&Name::new("projects").unwrap()].depth,
+            2
         );
     }
 

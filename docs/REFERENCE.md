@@ -40,6 +40,15 @@ membership  = "/srv/example/membership/research"
 read_only   = true    # default true  — MOUNT_ATTR_RDONLY
 noexec      = true    # default true  — MOUNT_ATTR_NOEXEC
 nosymfollow = false   # default false — MOUNT_ATTR_NOSYMFOLLOW
+
+[group_sets.projects]
+membership_root = "/srv/example/membership/projects"
+source_root     = "/srv/example/orgs"
+source          = "{group}/projects/{name}/workspace"
+target_root     = "/srv/example/orgs"
+target          = "{group}/groups/{subgroup}/view/{name}"
+read_only       = true
+noexec          = true
 ```
 
 ### Fields
@@ -69,6 +78,53 @@ name may be defined only once across all files.
 `MOUNT_ATTR_NOSUID` and `MOUNT_ATTR_NODEV` are always applied and cannot be
 disabled.
 
+**`[group_sets.<set-name>]`** — allowed in the main file and in fragments. A
+group set defines any number of groups that are created and removed at runtime
+by creating and removing directories, without changing configuration or
+reloading. A set name may be defined only once across all files.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `membership_root` | yes | Absolute path of the directory holding the groups. With one level, each subdirectory is a group; with two, each subdirectory of a subdirectory is. A group directory's files are its members. |
+| `source_root` | yes | As for groups. |
+| `source` | yes | Relative template beneath `source_root`; must contain `{name}`, and may contain `{group}` and `{subgroup}`. |
+| `target_root` | yes | As for groups. |
+| `target` | yes | Relative template beneath `target_root`; must contain `{name}` and every directory level the set uses. |
+| `read_only`, `noexec`, `nosymfollow` | no | As for groups; they apply to every group in the set. |
+
+The set's **depth** is the number of directory levels it uses: two if either
+template contains `{subgroup}`, otherwise one. The groups are then:
+
+| Depth | Group directory | Group identity | `{group}` | `{subgroup}` |
+|-------|-----------------|----------------|-----------|--------------|
+| 1 | `<membership_root>/<group>/` | `<set>/<group>` | `<group>` | — |
+| 2 | `<membership_root>/<group>/<subgroup>/` | `<set>/<group>/<subgroup>` | `<group>` | `<subgroup>` |
+
+For example, with the set above the file
+`/srv/example/membership/projects/acme/research/webapp` makes `webapp` a member
+of the group `projects/acme/research`, mounting
+`/srv/example/orgs/acme/projects/webapp/workspace` at
+`/srv/example/orgs/acme/groups/research/view/webapp`.
+
+Because `target` must contain every level, every group in a set has its own
+view. Using `{group}` in `source` confines a group's members to that group's
+own part of `source_root`; see
+[INTEGRATION.md](INTEGRATION.md#multiple-groups-and-tenants).
+
+Entries in a set's directory tree:
+
+- names beginning with `.` are ignored, at every level;
+- a directory with a valid [name](#names) is a group (or, at the first of two
+  levels, contains groups);
+- anything else — a file, symlink or other type, or a directory whose name
+  fails the rules — is rejected, logged once (`op=reject group=<set>/*`) and
+  listed by `byssus status`, `dry-run` and `check`;
+- the membership files inside a group directory follow the ordinary
+  [membership rules](DESIGN.md#membership-files).
+
+How group directories come and go is described in
+[DESIGN.md](DESIGN.md#group-sets).
+
 **Why a root plus a relative template?** `openat2()` with `RESOLVE_BENEATH`
 guarantees resolution stays beneath a directory descriptor and rejects
 absolute paths. Splitting each location into a trusted root (opened once) and
@@ -87,11 +143,16 @@ configuration retained) — if any of the following fail:
   mounts point. (`byssus status` and `byssus dry-run`, which never mount,
   report a violation as a warning so configurations can be checked before
   installation.)
-- Group names satisfy the [name rules](#names).
+- Group and group set names satisfy the [name rules](#names).
+- Group set templates use only the placeholders `{name}`, `{group}` and
+  `{subgroup}`, and `target` contains every level the set uses.
 - `source_root`, `target_root`, `membership` and `state_dir` are absolute,
   contain no `.` or `..` components, and exist as directories.
 - Templates satisfy the [template rules](#templates).
-- No membership directory lies at or beneath any group's `target_root`.
+- No membership directory or `membership_root` lies at or beneath any group's
+  or set's `target_root`.
+- No membership directory or `membership_root` lies at, beneath or above a
+  group set's `membership_root` (its subdirectories are groups).
 
 Two members (in the same or different groups) that resolve to the same target
 are detected during reconciliation and reported as conflicts; neither is
@@ -101,8 +162,8 @@ mounted.
 
 ### Names
 
-Member names come from membership file names; group names come from
-configuration. Both must:
+Member names come from membership file names; group and group set names come
+from configuration, and group names in a set from directory names. All must:
 
 - consist only of `A–Z`, `a–z`, `0–9`, `.`, `_`, `-`;
 - be 1–255 bytes long;
@@ -113,12 +174,20 @@ Membership entries whose names begin with `.` are ignored silently (see
 [Membership files](DESIGN.md#membership-files)); any other name that fails these rules
 is rejected.
 
+A group is identified in logs, `byssus status` and the state file as its
+configured name (`research`) for a statically configured group, or as
+`<set>/<group>` or `<set>/<group>/<subgroup>` (`projects/acme/research`) for a
+group in a set. Names cannot contain `/`, so the forms never collide. Problems
+with a set as a whole, or with an entry that is not a group, use `<set>/*`.
+
 ### Templates
 
 A template is a relative path of `/`-separated components.
 
-- Only the placeholder `{name}` is recognized; it may appear any number of
-  times, including within a component (`{name}-ro`).
+- `{name}` is the member name. In a group set, `{group}` and `{subgroup}` are
+  the group's directory names; statically configured groups accept only
+  `{name}`. Placeholders may appear any number of times, including within a
+  component (`{name}-ro`).
 - Any other `{` or `}` is an error.
 - The template must contain `{name}` at least once.
 - Components must be non-empty and must not be `.` or `..`; no leading or
@@ -160,7 +229,8 @@ byssus reconcile [--config <FILE>] [--config-dir <DIR>] [--user <USER>] [--allow
 byssus version
 ```
 
-- **`status`** — for each configured group and each state record: member,
+- **`status`** — for each configured group, each group currently discovered
+  in a group set, and each state record: member,
   target, and whether its mount is present and matches (`ok`), missing,
   conflicting, or has changed source; plus rejected membership entries with
   their reasons and the number of ignored hidden entries. Exits 1 only for
@@ -179,13 +249,18 @@ byssus version
   `--remove NAME`, an installed fragment is left out. It runs the reload's
   validation: parsing, ownership and modes (for a candidate, only the file
   itself; its future directory is the drop-in directory), cross-group rules,
-  paths, opening every root and membership directory, creating watches, and
+  paths, opening every root and membership directory, discovering the groups
+  currently in each group set, creating watches, and
   propagation (a slave target root is an error unless `--allow-slave-namespace`). Run
   as root with `daemon.user` configured, it checks access as that user.
+  Rejected set entries and group directories that cannot be opened are
+  warnings, since they are runtime data rather than configuration; an
+  unreadable `membership_root` is an error.
   Exit status `0` if a reload would accept the configuration, `1` otherwise.
   It does not compare against the running daemon's configuration, so it
   cannot report a changed `daemon.state_dir` (which fragments cannot set).
-- **`reconcile`** — one reconcile pass of every group, then exit. Requires
+- **`reconcile`** — one reconcile pass of every group (discovering the groups
+  of every set), then exit. Requires
   `CAP_SYS_ADMIN`; refuses to run while the daemon holds the state lock.
 - **`version`** — print the version.
 

@@ -20,6 +20,7 @@ Related documents: [REFERENCE.md](REFERENCE.md) (configuration, CLI, logs),
 - [Configuration](#configuration)
 - [Names and templates](#names-and-templates)
 - [Membership files](#membership-files)
+- [Group sets](#group-sets)
 - [Mount creation](#mount-creation)
 - [Mount identity](#mount-identity)
 - [Unmounting](#unmounting)
@@ -78,7 +79,8 @@ anything.
 
 | Term | Meaning |
 |------|---------|
-| **Group** | A named set of members sharing one view. Defined in configuration. |
+| **Group** | A named set of members sharing one view. Defined in configuration, or discovered in a group set. |
+| **Group set** | A template for many groups, defined once in configuration. Each group is a directory (one or two levels deep) beneath the set's membership root, so groups are created and removed at runtime without touching configuration. |
 | **Member** | A name (for example `libcurl`) whose source directory is exposed in the group's view. |
 | **Membership directory** | A directory whose regular, empty files name the group's members. Written by the integrating application; watched by `byssusd`. |
 | **Source root / source** | A trusted absolute directory, plus a relative template (for example `{name}/workspace`) locating a member's source directory beneath it. |
@@ -249,6 +251,59 @@ to a membership directory that cannot be read.
 
 A previously valid membership file that becomes invalid (for example, data is
 written into it) removes that member.
+
+## Group sets
+
+Adding a statically configured group means writing root-owned configuration
+and reloading. That is deliberate — configuration decides where mounts point —
+but it means a platform that creates groups on demand would need a root
+helper. A group set moves the privileged decision (which roots, which
+templates, which attributes) into configuration once, and leaves only the
+choice of group and member names, which are validated names like any member
+name, to the application.
+
+**Discovery.** At the start of every reconciliation pass, the daemon lists
+each set's `membership_root` through its descriptor and walks down the set's
+depth (one or two levels), opening each directory with `openat2()` and
+`RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`. Every group directory found yields a
+group whose templates are the set's templates with `{group}` and `{subgroup}`
+bound; the group then reconciles exactly like a statically configured one.
+Because names cannot contain `/`, binding a level can never add components,
+so a group's sources stay beneath its bound prefix (for example
+`acme/projects/`) as well as beneath `source_root`.
+
+**Watches.** The set root is watched like a membership directory. After
+discovery, the watcher adds a watch (with `IN_DONT_FOLLOW`) for each new
+intermediate and group directory and removes watches for vanished ones, so
+creating a group, adding members to it and removing it are all
+event-driven. Descriptors and watches for set groups are re-opened on every
+pass, so a directory replaced between passes is picked up as the new one.
+
+**Lifecycle.** Group directories are runtime data, so their loss is handled
+differently from a statically configured group's membership directory:
+
+| Event | Result |
+|-------|--------|
+| Group directory created | The group exists from the next pass. |
+| Group (or first-level) directory deleted or renamed away | Its groups no longer exist; their records are "not a member" rows, so their mounts are removed. |
+| Group or first-level directory cannot be opened or read | The affected groups are *frozen* for the pass: mounts and records kept, no changes, error logged once. |
+| `membership_root` deleted, moved or unmounted | The whole set is *degraded*, as for a static group: every record in the set is kept and untouched until a successful reload. |
+| `membership_root` cannot be read | The set is frozen for the pass. |
+
+Deleting a group directory intentionally removes the group, because that is
+how applications remove groups. Losing the root is treated as an accident,
+like losing a static membership directory, because it would otherwise remove
+every group at once.
+
+**Depth.** Sets are limited to two levels, which covers "group" and
+"organization/group" layouts. The depth is inferred from the templates, and
+`target` must use every level, so two groups can never share a view: a set
+whose target omits `{subgroup}` would merge all of an organization's groups
+into one view, defeating the point of separate groups.
+
+**Trust.** Write access to `membership_root` (at any level) is the authority
+to create groups and add members to them, within the bounds the set's
+templates allow. The application should hold it; consumers must not.
 
 ## Mount creation
 
@@ -495,7 +550,10 @@ Additional rules:
   Byssus mount that the same pass removes; the mount waits for that unmount.
 - **Dependencies:** a mount that depends on an unmount (source changed,
   relocation, freed target) is skipped if that unmount fails.
-- **Degraded groups:** records of degraded groups are left untouched.
+- **Degraded and frozen groups:** records of degraded groups, of degraded
+  group sets, and of groups frozen because their directory (or an ancestor in
+  the set) could not be read are left untouched. Their targets still count
+  for collision detection.
 - **Ordering:** within a pass, unmounts run before mounts.
 - **Failures are local:** an error on one member is logged and does not abort
   reconciliation of other members or groups.
@@ -515,8 +573,9 @@ Additional rules:
    exit 1 with a diagnostic if a required feature is missing.
 6. Check configured paths as the service user; exit 1 on error.
 7. Take the state lock; exit 1 if another instance holds it.
-8. Open root and membership directory descriptors for every group.
-9. Check propagation for every group's target root (see
+8. Open root and membership directory descriptors for every group and group
+   set.
+9. Check propagation for every group's and set's target root (see
    [Propagation](#propagation-and-mount-namespaces)).
 10. Load the state file.
 11. Install inotify watches, block the handled signals and create the
@@ -736,6 +795,8 @@ Example configuration is in `examples/`.
 - State file serialization, versioning, corrupt-file handling, atomic write
 - Every row of the reconciliation table, target collisions, template moves and
   removed groups
+- Group set validation, depth inference, level binding and directory
+  discovery (including rejected entries and unreadable levels)
 - Capability-normalization decision logic
 - Transactional reload (old configuration retained on failure)
 - `dry-run` and `status` formatting
@@ -764,6 +825,9 @@ further child mount namespace with `rslave` propagation.
 - Daemon restart → no-op reconcile
 - Propagation warning (private) and refusal (slave)
 - Read-only, nosuid, nodev, noexec actually enforced
+- Group sets: groups and subgroups created and removed at runtime, per-group
+  views, member names confined to their organization, rejected entries, lost
+  `membership_root`, restart no-op
 
 Service-user switching tests map subordinate UIDs into the namespace
 (`unshare --map-auto`); CI requires them, local runs skip them with a warning
@@ -783,6 +847,10 @@ if `/etc/subuid` is not configured.
   matching device and inode, which makes accidental matches implausible but
   not impossible (for example, a manual re-bind of the same source to the same
   target that happens to receive a recycled mount ID).
+- **Many groups in a set.** Every pass lists every set's directory tree and
+  each group directory holds an inotify watch, so very large numbers of groups
+  cost proportionally more per pass and may need a higher
+  `fs.inotify.max_user_watches`.
 - **Large groups.** Hundreds of mounts in one view are fine for the kernel but
   make recursive listings noisy for consumers.
 

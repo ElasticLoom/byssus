@@ -47,3 +47,21 @@ Decisions that refined the original design draft, with rationale:
     the group's `read_only` setting is the only control over member
     writability, and read-write groups are documented as trusting every
     consumer with every member's files.
+16. **Group sets instead of runtime configuration changes.** Adding a group
+    through configuration needs root, and letting an application write
+    configuration would give it root-equivalent control over where mounts
+    point. A group set fixes roots, templates and attributes in root-owned
+    configuration once; the application only chooses group and member names,
+    which are validated like member names and can only fill placeholders.
+17. **At most two directory levels, and every level in the target.** Two
+    levels cover "group" and "organization/group" layouts without an
+    open-ended hierarchy. Requiring every level in `target` guarantees each
+    group its own view, so a set can never merge groups.
+18. **A deleted group directory removes the group; a lost `membership_root`
+    degrades the set.** Removing a group directory is how applications remove
+    groups, so it takes effect; losing the root would remove every group at
+    once, so it is treated like a lost static membership directory. An
+    unreadable directory freezes only the groups beneath it.
+19. **Discovery on every pass with fresh descriptors and re-added watches**,
+    rather than caching discovered groups, so a replaced directory is always
+    the one read and watched.

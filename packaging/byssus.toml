@@ -7,6 +7,8 @@
 #
 # Reference: /usr/share/doc/byssus/REFERENCE.md
 # Example group: /usr/share/doc/byssus/examples/conf.d/research.toml
+# Example group set (groups created at runtime as directories):
+#   /usr/share/doc/byssus/examples/conf.d/projects.toml
 
 [daemon]
 # The service user. `byssusd` switches to it when started as root (the packaged

@@ -14,6 +14,11 @@ and this project adheres to
   reconciles read-only bind mounts; debounced change handling, periodic
   resync, transactional `SIGHUP` reload, clean shutdown that preserves mounts,
   and degraded handling of lost membership directories.
+- Group sets (`[group_sets.<name>]`): groups, and optionally subgroups, are
+  directories beneath a membership root, so applications create and remove
+  groups at runtime without configuration changes or root. Templates use
+  `{group}` and `{subgroup}` to confine sources and give each group its own
+  view.
 - `byssus` CLI: `status`, `dry-run`, `check`, `reconcile` and `version`, with
   text and JSON output. `check` validates candidate drop-in fragments exactly
   as a reload would, before they are installed.

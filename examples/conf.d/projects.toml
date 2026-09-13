@@ -1,0 +1,22 @@
+# Example drop-in: /etc/byssus/conf.d/projects.toml
+# Owned by root, mode 0644. A group set defines many groups at once: groups are
+# created and removed at runtime as directories, without changing configuration.
+
+[group_sets.projects]
+# Each directory two levels down (<group>/<subgroup>) is a group; the empty
+# files inside it name its members. Written by your application.
+membership_root = "/srv/example/membership/projects"
+
+# {group} and {subgroup} are the directory names, {name} the member file name.
+# Using {group} in source confines each group's members to its own projects.
+source_root = "/srv/example/orgs"
+source      = "{group}/projects/{name}/workspace"
+
+# Every level must appear in target, so each subgroup has its own view. The
+# target root must be on a shared mount (see docs/OPERATIONS.md).
+target_root = "/srv/example/orgs"
+target      = "{group}/groups/{subgroup}/view/{name}"
+
+read_only   = true   # MOUNT_ATTR_RDONLY (default true)
+noexec      = true   # MOUNT_ATTR_NOEXEC (default true)
+nosymfollow = false  # MOUNT_ATTR_NOSYMFOLLOW (default false)

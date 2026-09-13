@@ -73,6 +73,21 @@ target      = "{name}"
 membership  = "/srv/example/membership/research"
 ```
 
+For groups your application creates at runtime, a **group set** defines them
+once: each directory beneath `membership_root` (here `<org>/<group>`) is a
+group, so creating a group is `mkdir`, with no configuration change or root.
+
+```toml
+[group_sets.projects]
+membership_root = "/srv/example/membership/projects"
+source_root     = "/srv/example/orgs"
+source          = "{group}/projects/{name}/workspace"
+target_root     = "/srv/example/orgs"
+target          = "{group}/groups/{subgroup}/view/{name}"
+```
+
+See [INTEGRATION.md](docs/INTEGRATION.md#groups-created-at-runtime-group-sets).
+
 ## Install
 
 Byssus has no release yet; install from source (Linux 5.12+, Rust 1.85+):
