@@ -27,7 +27,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [ ] Enable GitHub private vulnerability reporting (repository settings; manual)
 - [ ] Branch protection on `main` requiring CI (repository settings; manual)
 - [ ] `CODE_OF_CONDUCT.md` (decide on text, e.g. Contributor Covenant)
-- [ ] Issue and pull request templates
+- [x] Issue and pull request templates
 
 ## M1 — Unprivileged core (pure logic, fully unit-tested)
 

@@ -1,0 +1,56 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security issues must not be reported here.** Use private vulnerability
+        reporting instead: https://github.com/ElasticLoom/byssus/security
+
+        Please remove secrets, internal hostnames and private paths from logs
+        and configuration before posting.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Byssus version
+      description: Output of `byssus version`.
+    validations:
+      required: true
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel version
+      description: Output of `uname -r`.
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How byssusd is started
+      options:
+        - systemd (contrib unit)
+        - systemd (customized unit)
+        - setcap, as an unprivileged user
+        - as root with a service user
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: dry-run
+    attributes:
+      label: Output of `sudo byssus dry-run`
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: For example `journalctl -u byssusd`.
+      render: text
