@@ -13,6 +13,7 @@
 #[cfg(not(target_os = "linux"))]
 compile_error!("byssus relies on Linux-specific mount APIs and only builds on Linux");
 
+pub mod app;
 pub mod config;
 pub mod fsops;
 pub mod identity;

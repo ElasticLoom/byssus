@@ -64,7 +64,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] `fsops`: empty leaf target directory removal
 - [x] `privileges`: apply normalization plan (capget/capset, bounding set, securebits, user switch, ambient clear, `no_new_privs`) and verify the result
 - [x] `privileges`: resolve service user from `/etc/passwd` and `/etc/group` (static musl has no NSS)
-- [ ] `config`: expose path checks separately so they run after privilege normalization (startup step order in DESIGN.md)
+- [x] `config`: expose path checks separately so they run after privilege normalization (startup step order in DESIGN.md)
 - [x] `lock`: state directory `flock`
 - [x] `state`: state I/O through a state-directory descriptor (`openat`/`renameat`/`fsync`)
 - [x] Integration test harness: `scripts/integration-tests.sh` running tests in `unshare --user --map-root-user --mount`
@@ -74,15 +74,16 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 
 ## M3 — Reconciler and CLI
 
-- [ ] `reconcile::observe`: gather membership, state and kernel observations for all groups
+- [x] `reconcile::observe`: gather membership, state and kernel observations for all groups
 - [ ] `reconcile::observe`: alias-aware target collision detection (compare target roots by device/inode, not only by configured path string)
-- [ ] `reconcile::execute`: apply planned actions, per-member error isolation, state writes
-- [ ] Structured logfmt logging (journal detection, all required fields)
-- [ ] `byssus version`
-- [ ] `byssus status` (text + JSON; permission-error fallback to kernel-only view)
-- [ ] `byssus dry-run` (full validation report, exit codes; switch to service user when root)
-- [ ] `byssus reconcile` (privilege normalization, lock, one pass)
-- [ ] Integration tests: end-to-end reconcile, conflicts, identity mismatch, source removed/recreated, rejects
+- [x] `reconcile::execute`: apply planned actions, per-member error isolation, state writes, rollback of unrecordable mounts
+- [ ] Unit tests for the executor's state bookkeeping with a fake kernel backend (currently covered only by namespace integration tests)
+- [x] Structured logfmt logging (journal detection, all required fields)
+- [x] `byssus version`
+- [x] `byssus status` (text + JSON; permission-error fallback to kernel-only view)
+- [x] `byssus dry-run` (full validation report, exit codes; switch to service user when root)
+- [x] `byssus reconcile` (privilege normalization, lock, one pass)
+- [x] Integration tests: end-to-end reconcile, conflicts, identity mismatch, source removed/recreated, rejects
 
 ## M4 — Daemon
 

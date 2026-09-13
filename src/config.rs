@@ -539,6 +539,11 @@ fn check_ownership(path: &Path, options: &LoadOptions, issues: &mut Issues) {
         to_check.push(parent.to_path_buf());
     }
     for p in to_check {
+        let what = if p == resolved {
+            "file".to_owned()
+        } else {
+            format!("containing directory {}", p.display())
+        };
         match std::fs::metadata(&p) {
             Ok(meta) => {
                 if meta.uid() != options.trusted_uid {
@@ -547,8 +552,7 @@ fn check_ownership(path: &Path, options: &LoadOptions, issues: &mut Issues) {
                         Some(path),
                         None,
                         format!(
-                            "{} is owned by uid {}, expected uid {}",
-                            p.display(),
+                            "{what} is owned by uid {}, expected uid {}",
                             meta.uid(),
                             options.trusted_uid
                         ),
@@ -560,8 +564,7 @@ fn check_ownership(path: &Path, options: &LoadOptions, issues: &mut Issues) {
                         Some(path),
                         None,
                         format!(
-                            "{} is group- or world-writable (mode {:04o})",
-                            p.display(),
+                            "{what} is group- or world-writable (mode {:04o})",
                             meta.mode() & 0o7777
                         ),
                     );
@@ -571,7 +574,7 @@ fn check_ownership(path: &Path, options: &LoadOptions, issues: &mut Issues) {
                 severity,
                 Some(path),
                 None,
-                format!("cannot stat {}: {e}", p.display()),
+                format!("cannot stat {what}: {e}"),
             ),
         }
     }

@@ -86,7 +86,7 @@ struct FieldVisitor {
 
 impl FieldVisitor {
     fn push(&mut self, field: &Field, value: String) {
-        if field.name() == "message" {
+        if field.name() == "message" || field.name() == "msg" {
             self.message = Some(value);
         } else {
             self.fields.push((field.name(), value));
@@ -233,13 +233,15 @@ mod tests {
                 ok = true,
             );
             tracing::info!(target_dir = "/v", "privileges normalized");
+            tracing::info!(op = "x", msg = "as a field");
             tracing::debug!("filtered out");
         });
         let out = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
         assert_eq!(
             out,
             "level=warn op=reject group=research name=.hidden reason=\"name fails allowlist\" count=3 ok=true\n\
-             level=info msg=\"privileges normalized\" target_dir=/v\n"
+             level=info msg=\"privileges normalized\" target_dir=/v\n\
+             level=info msg=\"as a field\" op=x\n"
         );
     }
 

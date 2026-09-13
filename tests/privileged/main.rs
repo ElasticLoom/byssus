@@ -7,6 +7,7 @@
 
 #![allow(clippy::print_stdout, clippy::print_stderr, unreachable_pub)]
 
+mod cli;
 mod common;
 mod kernel;
 mod privileges;
