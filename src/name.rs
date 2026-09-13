@@ -116,37 +116,61 @@ impl<'de> Deserialize<'de> for Name {
     }
 }
 
-/// Identifies a group: either a statically configured group (`acme`) or a
-/// group discovered in a group set (`research/acme`, set `research`).
+/// Identifies a group: a statically configured group (`acme`), or a group
+/// discovered in a group set, named by the set and one or two directory
+/// levels (`research/acme`, or `projects/acme/research` for a set with
+/// subgroups).
 ///
-/// Names cannot contain `/`, so the two forms never collide.
+/// Names cannot contain `/`, so the forms never collide.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GroupId {
     set: Option<Name>,
-    group: Name,
+    path: Vec<Name>,
 }
+
+/// The most directory levels a group set can have.
+pub const MAX_SET_DEPTH: usize = 2;
 
 impl GroupId {
     /// A statically configured group.
     #[must_use]
     pub fn statically(group: Name) -> Self {
-        Self { set: None, group }
-    }
-
-    /// A group discovered in a group set.
-    #[must_use]
-    pub fn in_set(set: Name, group: Name) -> Self {
         Self {
-            set: Some(set),
-            group,
+            set: None,
+            path: vec![group],
         }
     }
 
-    /// Parses `group` or `set/group`.
+    /// A group (or, with fewer levels than the set's depth, a directory
+    /// prefix of groups) in a group set.
+    ///
+    /// # Panics
+    ///
+    /// If `path` is empty or longer than [`MAX_SET_DEPTH`].
+    #[must_use]
+    pub fn in_set(set: Name, path: Vec<Name>) -> Self {
+        assert!(
+            !path.is_empty() && path.len() <= MAX_SET_DEPTH,
+            "invalid group set path length"
+        );
+        Self {
+            set: Some(set),
+            path,
+        }
+    }
+
+    /// Parses `group`, `set/group` or `set/group/subgroup`.
     pub fn parse(s: &str) -> Result<Self, NameError> {
-        match s.split_once('/') {
-            None => Ok(Self::statically(Name::new(s)?)),
-            Some((set, group)) => Ok(Self::in_set(Name::new(set)?, Name::new(group)?)),
+        let mut parts = s.split('/');
+        let first = Name::new(parts.next().unwrap_or_default())?;
+        let rest: Vec<Name> = parts.map(Name::new).collect::<Result<_, _>>()?;
+        match rest.len() {
+            0 => Ok(Self::statically(first)),
+            n if n <= MAX_SET_DEPTH => Ok(Self::in_set(first, rest)),
+            _ => Err(NameError::InvalidByte {
+                byte: b'/',
+                offset: s.rfind('/').unwrap_or(0),
+            }),
         }
     }
 
@@ -156,19 +180,28 @@ impl GroupId {
         self.set.as_ref()
     }
 
-    /// The group's own name (the directory name for set groups).
+    /// The group's name components: the static group name, or the set
+    /// directory levels.
     #[must_use]
-    pub fn group(&self) -> &Name {
-        &self.group
+    pub fn path(&self) -> &[Name] {
+        &self.path
+    }
+
+    /// Whether `self` is `prefix` or lies beneath it (same set, and
+    /// `prefix`'s path is a leading part of this path).
+    #[must_use]
+    pub fn starts_with(&self, prefix: &Self) -> bool {
+        self.set == prefix.set && self.path.starts_with(&prefix.path)
     }
 }
 
 impl fmt::Display for GroupId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.set {
-            Some(set) => write!(f, "{set}/{}", self.group),
-            None => f.write_str(self.group.as_str()),
+        if let Some(set) = &self.set {
+            write!(f, "{set}/")?;
         }
+        let parts: Vec<&str> = self.path.iter().map(Name::as_str).collect();
+        f.write_str(&parts.join("/"))
     }
 }
 
@@ -272,24 +305,47 @@ mod tests {
         assert_eq!(s.to_string(), "acme");
         let g = GroupId::parse("research/acme").unwrap();
         assert_eq!(g.set().unwrap().as_str(), "research");
-        assert_eq!(g.group().as_str(), "acme");
+        assert_eq!(g.path().len(), 1);
         assert_eq!(g.to_string(), "research/acme");
+        let sub = GroupId::parse("projects/acme/research").unwrap();
+        assert_eq!(
+            sub.path().iter().map(Name::as_str).collect::<Vec<_>>(),
+            ["acme", "research"]
+        );
+        assert_eq!(sub.to_string(), "projects/acme/research");
         assert_ne!(s, g);
         for bad in [
             "",
             "/acme",
             "research/",
-            "a/b/c",
+            "a/b/c/d",
             ".x",
             "research/.x",
             "a b",
+            "a//b",
         ] {
             assert!(GroupId::parse(bad).is_err(), "{bad}");
         }
-        let json = serde_json::to_string(&g).unwrap();
-        assert_eq!(json, "\"research/acme\"");
-        assert_eq!(serde_json::from_str::<GroupId>(&json).unwrap(), g);
-        assert!(serde_json::from_str::<GroupId>("\"a/b/c\"").is_err());
+        let json = serde_json::to_string(&sub).unwrap();
+        assert_eq!(json, "\"projects/acme/research\"");
+        assert_eq!(serde_json::from_str::<GroupId>(&json).unwrap(), sub);
+        assert!(serde_json::from_str::<GroupId>("\"a/b/c/d\"").is_err());
+    }
+
+    #[test]
+    fn group_id_prefixes() {
+        let org = GroupId::parse("projects/acme").unwrap();
+        let sub = GroupId::parse("projects/acme/research").unwrap();
+        assert!(sub.starts_with(&org));
+        assert!(sub.starts_with(&sub));
+        assert!(!org.starts_with(&sub));
+        assert!(!sub.starts_with(&GroupId::parse("other/acme").unwrap()));
+        assert!(!sub.starts_with(&GroupId::parse("projects/acm").unwrap()));
+        assert!(
+            !GroupId::parse("acme")
+                .unwrap()
+                .starts_with(&GroupId::parse("x/acme").unwrap())
+        );
     }
 
     #[test]

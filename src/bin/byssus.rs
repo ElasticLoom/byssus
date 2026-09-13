@@ -570,9 +570,11 @@ fn reconcile_once(source: &ConfigSource, args: &PrivilegeArgs) -> anyhow::Result
         &mut runtime,
         &mut writer.state,
         &writer.store,
-        &reconcile::Degraded::default(),
-        environment.features.unique_mount_ids(),
-        Trigger::Cli,
+        reconcile::PassOptions {
+            degraded: &reconcile::Degraded::default(),
+            unique_supported: environment.features.unique_mount_ids(),
+            trigger: Trigger::Cli,
+        },
         &mut reconcile::NoteLog::default(),
         &mut |_| {},
     );
@@ -635,6 +637,30 @@ impl CheckReport {
             }
         );
         out
+    }
+}
+
+/// Adds group set discovery problems to a `check` report: unreadable or
+/// deleted membership roots are errors; problems with individual groups or
+/// entries are warnings, as the daemon keeps running.
+fn report_discovery(report: &mut CheckReport, notes: &[observe::Note]) {
+    for note in notes {
+        match note {
+            observe::Note::SetRootDeleted { set } => report.errors.push(format!(
+                "group set '{set}': membership root has been deleted"
+            )),
+            observe::Note::SetRootUnreadable { set, error } => report.errors.push(format!(
+                "group set '{set}': cannot read membership root: {error}"
+            )),
+            observe::Note::MembershipUnreadable { group, error } => report.warnings.push(format!(
+                "group '{group}': cannot open membership directory: {error}"
+            )),
+            observe::Note::SetEntryRejected { set, rejection } => report.warnings.push(format!(
+                "group set '{set}': entry '{}' rejected: {}",
+                rejection.display_name, rejection.reason
+            )),
+            _ => {}
+        }
     }
 }
 
@@ -723,24 +749,7 @@ fn check(
     // Group sets' membership roots must be readable; individual groups that
     // cannot be read are only warnings, as the daemon keeps running.
     let discovery = runtime.discover(&BTreeSet::new());
-    for note in &discovery.notes {
-        match note {
-            observe::Note::SetRootDeleted { set } => report.errors.push(format!(
-                "group set '{set}': membership root has been deleted"
-            )),
-            observe::Note::SetRootUnreadable { set, error } => report.errors.push(format!(
-                "group set '{set}': cannot read membership root: {error}"
-            )),
-            observe::Note::MembershipUnreadable { group, error } => report.warnings.push(format!(
-                "group '{group}': cannot open membership directory: {error}"
-            )),
-            observe::Note::SetEntryRejected { set, rejection } => report.warnings.push(format!(
-                "group set '{set}': entry '{}' rejected: {}",
-                rejection.display_name, rejection.reason
-            )),
-            _ => {}
-        }
-    }
+    report_discovery(&mut report, &discovery.notes);
     let table = MountTable::read_self().context("cannot read /proc/self/mountinfo")?;
     for (name, target_root) in app::propagation_targets(&runtime) {
         let propagation = match runtime.roots.get(&target_root) {

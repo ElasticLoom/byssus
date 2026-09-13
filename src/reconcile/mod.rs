@@ -95,7 +95,13 @@ pub fn discover_and_observe(
     frozen.extend(
         state
             .records()
-            .filter(|r| r.group.set().is_some_and(|set| frozen_sets.contains(set)))
+            .filter(|r| {
+                r.group.set().is_some_and(|set| frozen_sets.contains(set))
+                    || discovery
+                        .unavailable
+                        .iter()
+                        .any(|prefix| r.group.starts_with(prefix))
+            })
             .map(|r| r.group.clone()),
     );
 
@@ -107,6 +113,17 @@ pub fn discover_and_observe(
     observed
 }
 
+/// Settings for one reconciliation pass.
+#[derive(Debug, Clone, Copy)]
+pub struct PassOptions<'a> {
+    /// Groups and sets whose records must be left untouched.
+    pub degraded: &'a Degraded,
+    /// Whether unique mount IDs are available.
+    pub unique_supported: bool,
+    /// Why the pass is running.
+    pub trigger: Trigger,
+}
+
 /// Observes, plans, logs findings and executes one reconciliation pass.
 ///
 /// `notes` remembers which observation notes were already logged, so a
@@ -116,12 +133,15 @@ pub fn run_pass<S: StateSink>(
     runtime: &mut Runtime,
     state: &mut State,
     sink: &S,
-    degraded: &Degraded,
-    unique_supported: bool,
-    trigger: Trigger,
+    options: PassOptions<'_>,
     notes: &mut NoteLog,
     after_discovery: &mut dyn FnMut(&Runtime),
 ) -> Pass {
+    let PassOptions {
+        degraded,
+        unique_supported,
+        trigger,
+    } = options;
     let observed =
         discover_and_observe(runtime, state, degraded, unique_supported, after_discovery);
     notes.report(&observed, trigger);

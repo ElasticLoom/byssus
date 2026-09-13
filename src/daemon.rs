@@ -144,9 +144,11 @@ impl Daemon {
             &mut self.runtime,
             &mut self.state,
             &self.store,
-            &self.degraded,
-            self.unique_supported,
-            trigger,
+            reconcile::PassOptions {
+                degraded: &self.degraded,
+                unique_supported: self.unique_supported,
+                trigger,
+            },
             &mut self.notes,
             &mut |runtime| watcher.sync(runtime),
         );

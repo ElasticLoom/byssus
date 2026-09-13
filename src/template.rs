@@ -18,13 +18,15 @@ use crate::name::{MAX_NAME_LEN, Name};
 pub const MAX_PATH_LEN: usize = 4095;
 
 const PLACEHOLDER: &str = "{name}";
-const GROUP_PLACEHOLDER: &str = "{group}";
+/// Placeholders for group set directory levels, in level order.
+const LEVEL_PLACEHOLDERS: [&str; crate::name::MAX_SET_DEPTH] = ["{group}", "{subgroup}"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Piece {
     Literal(String),
     Name,
-    Group,
+    /// A group set directory level: 0 is `{group}`, 1 is `{subgroup}`.
+    Level(usize),
 }
 
 /// A validated path template.
@@ -66,12 +68,13 @@ pub enum TemplateError {
     /// The template does not contain `{name}`.
     #[error("template must contain {{name}}")]
     MissingName,
-    /// `{group}` is used where it is not allowed (outside a group set).
-    #[error("{{group}} is only allowed in group set templates")]
+    /// `{group}` or `{subgroup}` is used outside a group set.
+    #[error("{{group}} and {{subgroup}} are only allowed in group set templates")]
     GroupNotAllowed,
-    /// A group set's target template does not contain `{group}`.
-    #[error("template must contain {{group}}")]
-    MissingGroup,
+    /// A group set's target template does not contain every level
+    /// placeholder the set uses.
+    #[error("template must contain {0}")]
+    MissingLevel(&'static str),
     /// A literal component is longer than `NAME_MAX`.
     #[error("template component is {0} bytes long; the maximum is {MAX_NAME_LEN}")]
     ComponentTooLong(usize),
@@ -159,8 +162,8 @@ impl Template {
                 match piece {
                     Piece::Literal(s) => component.push_str(s),
                     Piece::Name => component.push_str(name.as_str()),
-                    // Bound by `bind_group` before interpolation.
-                    Piece::Group => unreachable!("unbound {{group}} placeholder"),
+                    // Bound by `bind_levels` before interpolation.
+                    Piece::Level(_) => unreachable!("unbound group set placeholder"),
                 }
             }
             if component.len() > MAX_NAME_LEN {
@@ -177,15 +180,45 @@ impl Template {
         Ok(out)
     }
 
-    /// Whether the template contains `{group}`.
+    /// The number of group set levels this template refers to: 0 if it uses
+    /// neither `{group}` nor `{subgroup}`, 1 for `{group}` only, 2 if it uses
+    /// `{subgroup}`.
     #[must_use]
-    pub fn has_group(&self) -> bool {
-        self.components.iter().flatten().any(|p| *p == Piece::Group)
+    pub fn depth(&self) -> usize {
+        self.components
+            .iter()
+            .flatten()
+            .filter_map(|p| match p {
+                Piece::Level(level) => Some(level + 1),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0)
     }
 
-    /// Substitutes `group` for `{group}`, yielding a template whose only
+    /// Whether the template contains the placeholder for `level`.
+    #[must_use]
+    pub fn has_level(&self, level: usize) -> bool {
+        self.components
+            .iter()
+            .flatten()
+            .any(|p| *p == Piece::Level(level))
+    }
+
+    /// The placeholder text for a level, for messages.
+    #[must_use]
+    pub fn level_placeholder(level: usize) -> &'static str {
+        LEVEL_PLACEHOLDERS[level]
+    }
+
+    /// Substitutes directory level names (`levels[0]` for `{group}`,
+    /// `levels[1]` for `{subgroup}`), yielding a template whose only
     /// placeholder is `{name}`.
-    pub fn bind_group(&self, group: &Name) -> Result<Self, InterpolateError> {
+    ///
+    /// # Panics
+    ///
+    /// If the template refers to a level beyond `levels`.
+    pub fn bind_levels(&self, levels: &[Name]) -> Result<Self, InterpolateError> {
         let mut components = Vec::with_capacity(self.components.len());
         let mut raw_parts = Vec::with_capacity(self.components.len());
         for pieces in &self.components {
@@ -199,7 +232,7 @@ impl Template {
                         continue;
                     }
                     Piece::Literal(text) => text.as_str(),
-                    Piece::Group => group.as_str(),
+                    Piece::Level(level) => levels[*level].as_str(),
                 };
                 raw.push_str(text);
                 if let Some(Piece::Literal(last)) = bound.last_mut() {
@@ -245,16 +278,20 @@ fn parse_component(
             pieces.push(Piece::Name);
             rest = after;
             offset += pos + PLACEHOLDER.len();
-        } else if let Some(after) = tail.strip_prefix(GROUP_PLACEHOLDER) {
+        } else if let Some((level, after)) = LEVEL_PLACEHOLDERS
+            .iter()
+            .enumerate()
+            .find_map(|(level, p)| tail.strip_prefix(p).map(|after| (level, after)))
+        {
             if !allow_group {
                 return Err(TemplateError::GroupNotAllowed);
             }
             if !literal.is_empty() {
                 pieces.push(Piece::Literal(std::mem::take(&mut literal)));
             }
-            pieces.push(Piece::Group);
+            pieces.push(Piece::Level(level));
             rest = after;
-            offset += pos + GROUP_PLACEHOLDER.len();
+            offset += pos + LEVEL_PLACEHOLDERS[level].len();
         } else {
             let found = if tail.starts_with('{') {
                 tail.find('}').map_or("{", |end| &tail[..=end])
@@ -405,15 +442,22 @@ mod tests {
     }
 
     #[test]
-    fn group_placeholder_only_in_sets() {
+    fn level_placeholders_only_in_sets() {
         assert_eq!(
             Template::parse("{group}/{name}"),
             Err(TemplateError::GroupNotAllowed)
         );
-        let t = Template::parse_for_set("{group}/projects/{name}/ws-{group}").unwrap();
-        assert!(t.has_group());
-        assert!(!Template::parse_for_set("{name}").unwrap().has_group());
-        // {group} alone does not satisfy the {name} requirement.
+        assert_eq!(
+            Template::parse("{subgroup}/{name}"),
+            Err(TemplateError::GroupNotAllowed)
+        );
+        let t = Template::parse_for_set("{group}/groups/{subgroup}/view/{name}").unwrap();
+        assert_eq!(t.depth(), 2);
+        assert!(t.has_level(0) && t.has_level(1));
+        let one = Template::parse_for_set("{group}/projects/{name}").unwrap();
+        assert_eq!(one.depth(), 1);
+        assert!(!one.has_level(1));
+        assert_eq!(Template::parse_for_set("{name}").unwrap().depth(), 0);
         assert_eq!(
             Template::parse_for_set("{group}/x"),
             Err(TemplateError::MissingName)
@@ -425,28 +469,27 @@ mod tests {
     }
 
     #[test]
-    fn bind_group_substitutes_and_keeps_name() {
-        let t = Template::parse_for_set("{group}/projects/{name}/ws-{group}").unwrap();
-        let bound = t.bind_group(&name("acme")).unwrap();
-        assert!(!bound.has_group());
-        assert_eq!(bound.as_str(), "acme/projects/{name}/ws-acme");
+    fn bind_levels_substitutes_and_keeps_name() {
+        let t = Template::parse_for_set("{group}/groups/{subgroup}/view-{group}/{name}").unwrap();
+        let bound = t.bind_levels(&[name("acme"), name("research")]).unwrap();
+        assert_eq!(bound.depth(), 0);
+        assert_eq!(bound.as_str(), "acme/groups/research/view-acme/{name}");
         assert_eq!(
-            bound.interpolate(&name("libcurl")).unwrap(),
-            "acme/projects/libcurl/ws-acme"
+            bound.interpolate(&name("webapp")).unwrap(),
+            "acme/groups/research/view-acme/webapp"
         );
-        // Bound templates behave like static templates.
         assert_eq!(
             bound,
-            Template::parse("acme/projects/{name}/ws-acme").unwrap()
+            Template::parse("acme/groups/research/view-acme/{name}").unwrap()
         );
     }
 
     #[test]
-    fn bind_group_enforces_component_length() {
+    fn bind_levels_enforces_component_length() {
         let t = Template::parse_for_set("x{group}/{name}").unwrap();
         let long = name(&"a".repeat(MAX_NAME_LEN));
         assert_eq!(
-            t.bind_group(&long),
+            t.bind_levels(&[long]),
             Err(InterpolateError::ComponentTooLong(MAX_NAME_LEN + 1))
         );
     }

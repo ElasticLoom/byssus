@@ -204,8 +204,11 @@ pub struct GroupSetConfig {
     pub source: Template,
     /// Trusted root beneath which views are mounted.
     pub target_root: AbsPath,
-    /// Target template; contains `{group}`.
+    /// Target template; contains every level placeholder the set uses.
     pub target: Template,
+    /// Directory levels beneath `membership_root` that name a group: 1 when
+    /// the templates use only `{group}`, 2 when they use `{subgroup}`.
+    pub depth: usize,
     /// Mount attributes for every group in the set.
     pub attrs: MountAttrs,
     /// The file that defined this set.
@@ -213,15 +216,30 @@ pub struct GroupSetConfig {
 }
 
 impl GroupSetConfig {
-    /// The concrete configuration of the group named `group` in this set.
-    pub fn group(&self, group: &Name) -> Result<GroupConfig, crate::template::InterpolateError> {
+    /// The concrete configuration of the group at `path` (one name per
+    /// level) in this set.
+    ///
+    /// # Panics
+    ///
+    /// If `path.len()` differs from the set's depth.
+    pub fn group(&self, path: &[Name]) -> Result<GroupConfig, crate::template::InterpolateError> {
+        assert_eq!(
+            path.len(),
+            self.depth,
+            "group path does not match set depth"
+        );
+        let membership = path
+            .iter()
+            .fold(self.membership_root.clone(), |dir, level| {
+                dir.join_name(level)
+            });
         Ok(GroupConfig {
-            name: GroupId::in_set(self.name.clone(), group.clone()),
+            name: GroupId::in_set(self.name.clone(), path.to_vec()),
             source_root: self.source_root.clone(),
-            source: self.source.bind_group(group)?,
+            source: self.source.bind_levels(path)?,
             target_root: self.target_root.clone(),
-            target: self.target.bind_group(group)?,
-            membership: self.membership_root.join_name(group),
+            target: self.target.bind_levels(path)?,
+            membership,
             attrs: self.attrs,
             origin: self.origin.clone(),
         })
@@ -757,7 +775,7 @@ fn assemble(files: Vec<(PathBuf, RawFile, bool)>, issues: &mut Issues) -> Config
             }
             origins.insert(name.clone(), path.clone());
             if let Some(group) = validate_group(name, &raw_group, &path, issues) {
-                config.groups.insert(group.name.group().clone(), group);
+                config.groups.insert(group.name.path()[0].clone(), group);
             }
         }
 
@@ -902,14 +920,25 @@ fn validate_group_set(
     };
     let source = template(issues, "source", &raw.source);
     let target = template(issues, "target", &raw.target);
+    let depth = match (&source, &target) {
+        (Some(source), Some(target)) => source.depth().max(target.depth()).max(1),
+        _ => 1,
+    };
     if let Some(target) = &target {
-        if !target.has_group() {
-            issues.error(
-                Some(path),
-                g,
-                format!("target: {}", crate::template::TemplateError::MissingGroup),
-            );
-            return None;
+        for level in 0..depth {
+            if !target.has_level(level) {
+                issues.error(
+                    Some(path),
+                    g,
+                    format!(
+                        "target: {}",
+                        crate::template::TemplateError::MissingLevel(Template::level_placeholder(
+                            level
+                        ))
+                    ),
+                );
+                return None;
+            }
         }
     }
     let defaults = MountAttrs::default();
@@ -919,6 +948,7 @@ fn validate_group_set(
         source: source?,
         target_root: target_root?,
         target: target?,
+        depth,
         attrs: MountAttrs {
             read_only: raw.read_only.unwrap_or(defaults.read_only),
             noexec: raw.noexec.unwrap_or(defaults.noexec),
@@ -1213,7 +1243,8 @@ target = "{group}/groups/research/view/{name}"
         let loaded = main_only(SET).unwrap();
         let set = &loaded.config.group_sets[&Name::new("research").unwrap()];
         assert_eq!(set.attrs, MountAttrs::default());
-        let group = set.group(&Name::new("acme").unwrap()).unwrap();
+        assert_eq!(set.depth, 1);
+        let group = set.group(&[Name::new("acme").unwrap()]).unwrap();
         assert_eq!(group.name.to_string(), "research/acme");
         assert_eq!(group.source.as_str(), "acme/projects/{name}/workspace");
         assert_eq!(group.target.as_str(), "acme/groups/research/view/{name}");
@@ -1236,7 +1267,7 @@ target = "{group}/groups/research/view/{name}"
         );
         assert_error_contains(
             main_only(&GROUP.replace("\"{name}/workspace\"", "\"{group}/{name}\"")),
-            "{group} is only allowed in group set templates",
+            "{group} and {subgroup} are only allowed in group set templates",
         );
         assert_error_contains(
             main_only(&SET.replace("[group_sets.research]", "[group_sets.\"a/b\"]")),
@@ -1257,6 +1288,58 @@ target = "{group}/groups/research/view/{name}"
         ])
         .unwrap_err();
         assert!(messages(&err)[0].contains("group set is already defined in /a.toml"));
+    }
+
+    const SUBGROUP_SET: &str = r#"
+[group_sets.projects]
+membership_root = "/var/lib/platform/membership"
+source_root = "/data/orgs"
+source = "{group}/projects/{name}/workspace"
+target_root = "/data/orgs"
+target = "{group}/groups/{subgroup}/view/{name}"
+"#;
+
+    #[test]
+    fn subgroup_set_parses_and_binds() {
+        let loaded = main_only(SUBGROUP_SET).unwrap();
+        let set = &loaded.config.group_sets[&Name::new("projects").unwrap()];
+        assert_eq!(set.depth, 2);
+        let path = [Name::new("acme").unwrap(), Name::new("research").unwrap()];
+        let group = set.group(&path).unwrap();
+        assert_eq!(group.name.to_string(), "projects/acme/research");
+        assert_eq!(group.source.as_str(), "acme/projects/{name}/workspace");
+        assert_eq!(group.target.as_str(), "acme/groups/research/view/{name}");
+        assert_eq!(
+            group.membership.as_path(),
+            Path::new("/var/lib/platform/membership/acme/research")
+        );
+    }
+
+    #[test]
+    fn subgroup_set_target_must_use_every_level() {
+        // {subgroup} in the source makes the set two levels deep, so the
+        // target must name the subgroup too, or subgroups would share a view.
+        assert_error_contains(
+            main_only(
+                &SUBGROUP_SET
+                    .replace(
+                        "{group}/projects/{name}/workspace",
+                        "{group}/{subgroup}/{name}",
+                    )
+                    .replace(
+                        "{group}/groups/{subgroup}/view/{name}",
+                        "{group}/view/{name}",
+                    ),
+            ),
+            "target: template must contain {subgroup}",
+        );
+        assert_error_contains(
+            main_only(&SUBGROUP_SET.replace(
+                "{group}/groups/{subgroup}/view/{name}",
+                "groups/{subgroup}/view/{name}",
+            )),
+            "target: template must contain {group}",
+        );
     }
 
     #[test]

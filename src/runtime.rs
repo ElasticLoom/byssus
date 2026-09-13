@@ -99,8 +99,9 @@ pub struct SetRuntime {
 pub struct Discovery {
     /// Problems to report.
     pub notes: Vec<Note>,
-    /// Groups that exist but could not be opened this pass; their records
-    /// must be left untouched.
+    /// Groups, or intermediate directories (path prefixes of groups), that
+    /// exist but could not be read this pass; records of every group at or
+    /// beneath them must be left untouched.
     pub unavailable: BTreeSet<GroupId>,
     /// Sets whose membership root could not be read this pass; all their
     /// groups' records must be left untouched.
@@ -117,6 +118,10 @@ pub struct Runtime {
     pub groups: BTreeMap<GroupId, GroupRuntime>,
     /// Group sets by name.
     pub sets: BTreeMap<Name, SetRuntime>,
+    /// Intermediate directories of group sets with subgroups (for example an
+    /// org directory holding subgroup directories), by the set and path
+    /// prefix they represent, from the most recent [`Runtime::discover`].
+    pub intermediates: BTreeMap<GroupId, AbsPath>,
     /// Root descriptors.
     pub roots: Roots,
 }
@@ -187,19 +192,21 @@ impl Runtime {
     /// the membership root, without following symlinks.
     pub fn discover(&mut self, skip: &BTreeSet<Name>) -> Discovery {
         self.groups.retain(|id, _| id.set().is_none());
+        self.intermediates.clear();
         let mut discovery = Discovery::default();
         for (set_name, set) in &self.sets {
             if skip.contains(set_name) {
                 continue;
             }
             match discover_set(set) {
-                Ok((groups, notes, unavailable)) => {
+                Ok(scan) => {
                     discovery.scanned_sets.insert(set_name.clone());
-                    for group in groups {
+                    for group in scan.groups {
                         self.groups.insert(group.config.name.clone(), group);
                     }
-                    discovery.notes.extend(notes);
-                    discovery.unavailable.extend(unavailable);
+                    self.intermediates.extend(scan.intermediates);
+                    discovery.notes.extend(scan.notes);
+                    discovery.unavailable.extend(scan.unavailable);
                 }
                 Err(note) => {
                     discovery.notes.push(note);
@@ -236,7 +243,13 @@ impl Runtime {
     }
 }
 
-type SetScan = (Vec<GroupRuntime>, Vec<Note>, Vec<GroupId>);
+#[derive(Default)]
+struct SetScan {
+    groups: Vec<GroupRuntime>,
+    intermediates: Vec<(GroupId, AbsPath)>,
+    notes: Vec<Note>,
+    unavailable: Vec<GroupId>,
+}
 
 fn discover_set(set: &SetRuntime) -> Result<SetScan, Note> {
     let set_name = &set.config.name;
@@ -245,94 +258,128 @@ fn discover_set(set: &SetRuntime) -> Result<SetScan, Note> {
             set: set_name.clone(),
         });
     }
-    let unreadable = |e: io::Error| Note::SetRootUnreadable {
+    let mut scan = SetScan::default();
+    scan_level(set, set.root_dir.as_fd(), &[], &mut scan).map_err(|e| Note::SetRootUnreadable {
         set: set_name.clone(),
         error: e.to_string(),
-    };
-    let mut reader =
-        rustix::fs::Dir::read_from(set.root_dir.as_fd()).map_err(|e| unreadable(e.into()))?;
-    let mut groups = Vec::new();
-    let mut notes = Vec::new();
-    let mut unavailable = Vec::new();
+    })?;
+    Ok(scan)
+}
+
+/// Checks that a group set entry is a directory with a valid name. Returns
+/// `Ok(None)` if it vanished since being listed.
+fn classify_set_entry(dir: BorrowedFd<'_>, file_name: &CStr) -> Result<Option<Name>, RejectReason> {
+    let name = Name::from_bytes(file_name.to_bytes()).map_err(RejectReason::InvalidName)?;
+    let kind = rustix::fs::statx(dir, file_name, AtFlags::SYMLINK_NOFOLLOW, StatxFlags::TYPE)
+        .map(|st| FileType::from_raw_mode(u32::from(st.stx_mode)));
+    match kind {
+        Ok(FileType::Directory) => Ok(Some(name)),
+        Err(rustix::io::Errno::NOENT) => Ok(None),
+        Ok(other) => Err(RejectReason::NotDirectory(match other {
+            FileType::RegularFile => EntryKind::Regular { size: 0 },
+            FileType::Symlink => EntryKind::Symlink,
+            FileType::Fifo => EntryKind::Fifo,
+            FileType::Socket => EntryKind::Socket,
+            FileType::CharacterDevice => EntryKind::CharDevice,
+            FileType::BlockDevice => EntryKind::BlockDevice,
+            FileType::Directory | FileType::Unknown => EntryKind::Unknown,
+        })),
+        Err(e) => Err(RejectReason::Inaccessible(e.to_string())),
+    }
+}
+
+/// Scans one directory level of a group set. `prefix` holds the level names
+/// above `dir` (empty for the membership root). Errors reading `dir` itself
+/// are returned; problems with individual entries are recorded in `scan`.
+fn scan_level(
+    set: &SetRuntime,
+    dir: BorrowedFd<'_>,
+    prefix: &[Name],
+    scan: &mut SetScan,
+) -> io::Result<()> {
+    let set_name = &set.config.name;
+    let mut reader = rustix::fs::Dir::read_from(dir)?;
     while let Some(entry) = reader.read() {
-        let entry = entry.map_err(|e| unreadable(e.into()))?;
+        let entry = entry?;
         let file_name: &CStr = entry.file_name();
         let bytes = file_name.to_bytes();
         if bytes.starts_with(b".") {
             continue;
         }
+        let display_name = prefix
+            .iter()
+            .map(|n| n.as_str().to_owned())
+            .chain(std::iter::once(display_bytes(bytes)))
+            .collect::<Vec<_>>()
+            .join("/");
         let reject = |reason| Note::SetEntryRejected {
             set: set_name.clone(),
             rejection: Rejection {
-                display_name: display_bytes(bytes),
+                display_name: display_name.clone(),
                 reason,
             },
         };
-        let name = match Name::from_bytes(bytes) {
-            Ok(name) => name,
-            Err(e) => {
-                notes.push(reject(RejectReason::InvalidName(e)));
-                continue;
-            }
-        };
-        let kind = rustix::fs::statx(
-            set.root_dir.as_fd(),
-            file_name,
-            AtFlags::SYMLINK_NOFOLLOW,
-            StatxFlags::TYPE,
-        )
-        .map(|st| FileType::from_raw_mode(u32::from(st.stx_mode)));
-        match kind {
-            Ok(FileType::Directory) => {}
+        let name = match classify_set_entry(dir, file_name) {
+            Ok(Some(name)) => name,
             // Vanished since listing.
-            Err(rustix::io::Errno::NOENT) => continue,
-            Ok(other) => {
-                let kind = match other {
-                    FileType::RegularFile => EntryKind::Regular { size: 0 },
-                    FileType::Symlink => EntryKind::Symlink,
-                    FileType::Fifo => EntryKind::Fifo,
-                    FileType::Socket => EntryKind::Socket,
-                    FileType::CharacterDevice => EntryKind::CharDevice,
-                    FileType::BlockDevice => EntryKind::BlockDevice,
-                    FileType::Directory | FileType::Unknown => EntryKind::Unknown,
-                };
-                notes.push(reject(RejectReason::NotDirectory(kind)));
-                continue;
-            }
-            Err(e) => {
-                notes.push(reject(RejectReason::Inaccessible(e.to_string())));
-                continue;
-            }
-        }
-        let config = match set.config.group(&name) {
-            Ok(config) => config,
-            Err(e) => {
-                notes.push(reject(RejectReason::Inaccessible(format!("template: {e}"))));
+            Ok(None) => continue,
+            Err(reason) => {
+                scan.notes.push(reject(reason));
                 continue;
             }
         };
-        match rustix::fs::openat2(
-            set.root_dir.as_fd(),
+
+        let mut path = prefix.to_vec();
+        path.push(name);
+        let id = GroupId::in_set(set_name.clone(), path.clone());
+        let opened = match rustix::fs::openat2(
+            dir,
             file_name,
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
             Mode::empty(),
             fsops::CONFINED,
         ) {
-            Ok(membership_dir) => groups.push(GroupRuntime {
-                config,
-                membership_dir,
-            }),
-            Err(rustix::io::Errno::NOENT) => {}
+            Ok(fd) => fd,
+            Err(rustix::io::Errno::NOENT) => continue,
             Err(e) => {
-                notes.push(Note::MembershipUnreadable {
-                    group: config.name.clone(),
+                scan.notes.push(Note::MembershipUnreadable {
+                    group: id.clone(),
                     error: e.to_string(),
                 });
-                unavailable.push(config.name);
+                scan.unavailable.push(id);
+                continue;
             }
+        };
+
+        if path.len() < set.config.depth {
+            let dir_path = path
+                .iter()
+                .fold(set.config.membership_root.clone(), |d, level| {
+                    d.join_name(level)
+                });
+            if let Err(e) = scan_level(set, opened.as_fd(), &path, scan) {
+                scan.notes.push(Note::MembershipUnreadable {
+                    group: id.clone(),
+                    error: e.to_string(),
+                });
+                scan.unavailable.push(id);
+                continue;
+            }
+            scan.intermediates.push((id, dir_path));
+            continue;
+        }
+
+        match set.config.group(&path) {
+            Ok(config) => scan.groups.push(GroupRuntime {
+                config,
+                membership_dir: opened,
+            }),
+            Err(e) => scan
+                .notes
+                .push(reject(RejectReason::Inaccessible(format!("template: {e}")))),
         }
     }
-    Ok((groups, notes, unavailable))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -499,5 +546,79 @@ mod tests {
             Subject::Set(Name::new("research").unwrap())
         );
         assert!(errors[0].to_string().starts_with("group set 'research'"));
+    }
+
+    fn subgroup_config(dir: &Path) -> Config {
+        for d in ["orgs", "membership"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        let p = |s: &str| dir.join(s).display().to_string();
+        let text = format!(
+            "[group_sets.projects]\nmembership_root = \"{}\"\nsource_root = \"{}\"\nsource = \"{{group}}/projects/{{name}}\"\ntarget_root = \"{}\"\ntarget = \"{{group}}/groups/{{subgroup}}/view/{{name}}\"\n",
+            p("membership"),
+            p("orgs"),
+            p("orgs")
+        );
+        load_from_strs(&[(Path::new("/x.toml"), &text, true)])
+            .unwrap()
+            .config
+    }
+
+    #[test]
+    fn discovers_subgroups_two_levels_deep() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = subgroup_config(dir.path());
+        let root = dir.path().join("membership");
+        for d in [
+            "acme/research",
+            "acme/monitoring",
+            "beta/research",
+            "empty-org",
+        ] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        std::fs::write(root.join("stray-file"), "").unwrap();
+        std::fs::write(root.join("acme/member-at-org-level"), "").unwrap();
+        std::fs::create_dir(root.join("acme/.tmp")).unwrap();
+
+        let mut rt = Runtime::open(&config).unwrap();
+        let discovery = rt.discover(&BTreeSet::new());
+        assert_eq!(
+            ids(&rt),
+            [
+                "projects/acme/monitoring",
+                "projects/acme/research",
+                "projects/beta/research"
+            ]
+        );
+        let intermediates: Vec<String> = rt.intermediates.keys().map(ToString::to_string).collect();
+        assert_eq!(
+            intermediates,
+            ["projects/acme", "projects/beta", "projects/empty-org"]
+        );
+        let rejected: BTreeSet<String> = discovery
+            .notes
+            .iter()
+            .filter_map(|n| match n {
+                Note::SetEntryRejected { rejection, .. } => Some(rejection.display_name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            rejected,
+            ["acme/member-at-org-level", "stray-file"]
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect()
+        );
+        let research = &rt.groups[&GroupId::parse("projects/acme/research").unwrap()];
+        assert_eq!(
+            research.config.target.as_str(),
+            "acme/groups/research/view/{name}"
+        );
+        assert_eq!(
+            research.config.membership.as_path(),
+            root.join("acme/research")
+        );
     }
 }

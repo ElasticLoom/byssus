@@ -100,19 +100,27 @@ impl Watcher {
         Ok(inotify::add_watch(&self.fd, path, flags)?)
     }
 
-    /// Watches the membership directories of set groups in `runtime` that are
-    /// not watched yet, and stops watching set groups that are gone. Call after
-    /// each discovery, before membership is read.
+    /// Watches the directories of set groups (and, for sets with subgroups,
+    /// the intermediate directories) in `runtime` that are not watched yet,
+    /// and stops watching those that are gone. Call after each discovery,
+    /// before membership is read.
     pub fn sync(&mut self, runtime: &Runtime) {
-        let current: BTreeSet<&GroupId> = runtime
+        let mut current: BTreeMap<&GroupId, &std::path::Path> = runtime
             .groups
-            .keys()
-            .filter(|id| id.set().is_some())
+            .iter()
+            .filter(|(id, _)| id.set().is_some())
+            .map(|(id, g)| (id, g.config.membership.as_path()))
             .collect();
+        current.extend(
+            runtime
+                .intermediates
+                .iter()
+                .map(|(id, path)| (id, path.as_path())),
+        );
         let gone: Vec<GroupId> = self
             .set_groups
             .keys()
-            .filter(|id| !current.contains(id))
+            .filter(|id| !current.contains_key(id))
             .cloned()
             .collect();
         for id in gone {
@@ -122,15 +130,11 @@ impl Watcher {
                 let _ = inotify::remove_watch(&self.fd, wd);
             }
         }
-        for id in current {
+        for (id, path) in current {
             if self.set_groups.contains_key(id) {
                 continue;
             }
-            let group = &runtime.groups[id];
-            match self.add(
-                group.config.membership.as_path(),
-                MEMBERSHIP_EVENTS | WatchFlags::DONT_FOLLOW,
-            ) {
+            match self.add(path, MEMBERSHIP_EVENTS | WatchFlags::DONT_FOLLOW) {
                 Ok(wd) => {
                     self.watches.insert(wd, Watched::Group(id.clone()));
                     self.set_groups.insert(id.clone(), wd);
@@ -139,7 +143,7 @@ impl Watcher {
                 Err(e) if e.raw_os_error() == Some(libc::ENOENT) => {}
                 Err(e) => tracing::warn!(
                     group = %id,
-                    msg = "cannot watch group membership directory; changes are picked up at the next resync",
+                    msg = "cannot watch group set directory; changes are picked up at the next resync",
                     error = %e,
                 ),
             }
@@ -322,5 +326,41 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["research"]
         );
+    }
+
+    #[test]
+    fn watches_intermediate_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        for d in ["orgs", "membership"] {
+            fs::create_dir_all(dir.path().join(d)).unwrap();
+        }
+        let p = |s: &str| dir.path().join(s).display().to_string();
+        let text = format!(
+            "[group_sets.projects]\nmembership_root = \"{}\"\nsource_root = \"{}\"\nsource = \"{{group}}/{{name}}\"\ntarget_root = \"{}\"\ntarget = \"{{group}}/{{subgroup}}/{{name}}\"\n",
+            p("membership"),
+            p("orgs"),
+            p("orgs")
+        );
+        let config = load_from_strs(&[(Path::new("/x.toml"), &text, true)])
+            .unwrap()
+            .config;
+        let mut runtime = Runtime::open(&config).unwrap();
+        let mut watcher = Watcher::new(&runtime).unwrap();
+        let root = dir.path().join("membership");
+
+        // A new, empty org is watched after discovery...
+        fs::create_dir(root.join("acme")).unwrap();
+        assert!(watcher.drain().unwrap().membership_changed);
+        runtime.discover(&BTreeSet::new());
+        watcher.sync(&runtime);
+
+        // ...so creating a subgroup inside it is noticed.
+        fs::create_dir(root.join("acme/research")).unwrap();
+        assert!(watcher.drain().unwrap().membership_changed);
+        runtime.discover(&BTreeSet::new());
+        watcher.sync(&runtime);
+        fs::write(root.join("acme/research/webapp"), "").unwrap();
+        assert!(watcher.drain().unwrap().membership_changed);
+        assert_eq!(watcher.set_groups.len(), 2);
     }
 }

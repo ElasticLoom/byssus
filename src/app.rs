@@ -211,7 +211,7 @@ pub fn check_propagation(
             }
             check if check.is_slave() => {
                 tracing::error!(group = %name, target_root = %target_root, msg = %check.describe());
-                slave_groups.push(name.to_string());
+                slave_groups.push(name.clone());
             }
             _ => tracing::warn!(group = %name, target_root = %target_root, msg = %check.describe()),
         }
