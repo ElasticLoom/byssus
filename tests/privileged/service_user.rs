@@ -97,6 +97,7 @@ fn root_switches_to_service_user_keeping_sys_admin() {
         let after = apply::apply(&p, proc().as_fd()).unwrap();
         assert_eq!(after.uids, [SERVICE_UID; 3]);
         assert_eq!(after.gids, [SERVICE_GID; 3]);
+        assert_eq!(after.groups, [SERVICE_GID]);
         assert_eq!(after.cap_effective, CapabilitySet::SYS_ADMIN.bits());
         assert_eq!(after.cap_bounding, CapabilitySet::SYS_ADMIN.bits());
         // CAP_SYS_ADMIN still works after the switch.

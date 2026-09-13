@@ -34,6 +34,21 @@ pub struct ServiceUser {
     pub groups: Vec<u32>,
 }
 
+impl ServiceUser {
+    /// The groups a switch to this user sets: its primary group, with the
+    /// primary group also among the supplementary groups.
+    fn final_groups(&self) -> FinalGroups {
+        let mut groups = self.groups.clone();
+        if !groups.contains(&self.gid) {
+            groups.insert(0, self.gid);
+        }
+        FinalGroups {
+            gid: self.gid,
+            groups,
+        }
+    }
+}
+
 /// What the caller needs after normalization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Goal {
@@ -132,6 +147,18 @@ pub struct PrivilegePlan {
     /// Capabilities expected in the effective and permitted sets afterwards;
     /// the inheritable and ambient sets are empty.
     pub final_caps: CapabilitySet,
+    /// Groups expected after switching to the service user, or `None` when
+    /// no switch is planned and groups are left unchanged.
+    pub final_groups: Option<FinalGroups>,
+}
+
+/// Groups expected after a user switch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinalGroups {
+    /// GID expected (all of real, effective, saved).
+    pub gid: u32,
+    /// Supplementary groups expected, including `gid`.
+    pub groups: Vec<u32>,
 }
 
 /// Securebits set and locked when `CAP_SETPCAP` is available: never grant
@@ -229,12 +256,9 @@ pub fn plan(current: &Credentials, request: &Request) -> Result<PrivilegePlan, P
         if !has_setpcap {
             ops.push(Op::SetKeepCaps(true));
         }
-        let mut groups = user.groups.clone();
-        if !groups.contains(&user.gid) {
-            groups.insert(0, user.gid);
-        }
-        ops.push(Op::SetGroups(groups));
-        ops.push(Op::SetResGid(user.gid));
+        let groups = user.final_groups();
+        ops.push(Op::SetGroups(groups.groups));
+        ops.push(Op::SetResGid(groups.gid));
         ops.push(Op::SetResUid(user.uid));
         if !has_setpcap {
             ops.push(Op::SetKeepCaps(false));
@@ -253,6 +277,7 @@ pub fn plan(current: &Credentials, request: &Request) -> Result<PrivilegePlan, P
         warnings,
         final_uid: switch_to.map_or(effective_uid, |u| u.uid),
         final_caps: keep,
+        final_groups: switch_to.map(ServiceUser::final_groups),
     })
 }
 
@@ -368,6 +393,7 @@ mod tests {
             ]
         );
         assert_eq!(p.final_uid, 0);
+        assert_eq!(p.final_groups, None);
         assert_eq!(p.warnings, [Warning::RunningAsRoot]);
     }
 
@@ -392,6 +418,13 @@ mod tests {
             ]
         );
         assert_eq!(p.final_uid, 991);
+        assert_eq!(
+            p.final_groups,
+            Some(FinalGroups {
+                gid: 991,
+                groups: vec![991, 5, 7],
+            })
+        );
         assert!(p.warnings.is_empty());
     }
 

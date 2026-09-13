@@ -20,6 +20,8 @@ pub struct ProcessState {
     pub uids: [u32; 3],
     /// Real, effective and saved GIDs.
     pub gids: [u32; 3],
+    /// Supplementary groups.
+    pub groups: Vec<u32>,
     /// Number of threads.
     pub threads: u32,
     /// `CapInh`.
@@ -45,6 +47,10 @@ impl ProcessState {
         Ok(Self {
             uids: res_ids(libc::getresuid)?,
             gids: res_ids(libc::getresgid)?,
+            groups: rustix::process::getgroups()?
+                .into_iter()
+                .map(Gid::as_raw)
+                .collect(),
             threads: thread_count(proc)?,
             cap_inheritable: caps.inheritable.bits(),
             cap_permitted: caps.permitted.bits(),
@@ -202,6 +208,20 @@ fn drop_bounding_except(keep: CapabilitySet) -> io::Result<()> {
 pub fn verify(plan: &PrivilegePlan, status: &ProcessState) -> Result<(), String> {
     let mut problems = Vec::new();
     let expected_caps = plan.final_caps.bits();
+    if let Some(expected) = &plan.final_groups {
+        if status.gids.iter().any(|&g| g != expected.gid) {
+            problems.push(format!(
+                "GIDs {:?}, expected all {}",
+                status.gids, expected.gid
+            ));
+        }
+        if sorted(&status.groups) != sorted(&expected.groups) {
+            problems.push(format!(
+                "supplementary groups {:?}, expected {:?}",
+                status.groups, expected.groups
+            ));
+        }
+    }
     if status.uids.iter().any(|&u| u != plan.final_uid) {
         problems.push(format!(
             "UIDs {:?}, expected all {}",
@@ -246,6 +266,14 @@ pub fn verify(plan: &PrivilegePlan, status: &ProcessState) -> Result<(), String>
     } else {
         Err(problems.join("; "))
     }
+}
+
+/// `groups` sorted and deduplicated; the kernel keeps groups sorted.
+fn sorted(groups: &[u32]) -> Vec<u32> {
+    let mut groups = groups.to_vec();
+    groups.sort_unstable();
+    groups.dedup();
+    groups
 }
 
 const CAPABILITY_NAMES: [&str; 41] = [
@@ -314,12 +342,13 @@ mod tests {
     use std::os::fd::AsFd;
 
     use super::*;
-    use crate::privileges::plan::{LOCKED_SECURE_BITS, PrivilegePlan};
+    use crate::privileges::plan::{FinalGroups, LOCKED_SECURE_BITS, PrivilegePlan};
 
     fn normalized() -> ProcessState {
         ProcessState {
             uids: [991; 3],
             gids: [991; 3],
+            groups: vec![5, 991],
             threads: 1,
             cap_inheritable: 0,
             cap_permitted: 1 << 21,
@@ -341,6 +370,10 @@ mod tests {
             warnings: vec![],
             final_uid,
             final_caps: CapabilitySet::SYS_ADMIN,
+            final_groups: Some(FinalGroups {
+                gid: 991,
+                groups: vec![991, 5],
+            }),
         }
     }
 
@@ -378,6 +411,11 @@ mod tests {
         let hex = |key| u64::from_str_radix(&field(key), 16).unwrap();
         assert_eq!(s.uids.to_vec(), ids("Uid"));
         assert_eq!(s.gids.to_vec(), ids("Gid"));
+        let groups: Vec<u32> = field("Groups")
+            .split_whitespace()
+            .map(|id| id.parse().unwrap())
+            .collect();
+        assert_eq!(sorted(&s.groups), sorted(&groups));
         assert!(s.threads >= 1);
         assert_eq!(s.cap_inheritable, hex("CapInh"));
         assert_eq!(s.cap_permitted, hex("CapPrm"));
@@ -402,6 +440,9 @@ mod tests {
             assert!(err.contains(needle), "{needle}: {err}");
         };
         check(&|s| s.uids[2] = 0, false, "UIDs");
+        check(&|s| s.gids[1] = 0, false, "GIDs");
+        check(&|s| s.groups.push(0), false, "supplementary groups");
+        check(&|s| s.groups.clear(), false, "supplementary groups");
         check(&|s| s.cap_effective |= 1, false, "effective");
         check(&|s| s.cap_permitted |= 1, false, "permitted");
         check(&|s| s.cap_inheritable = 1, false, "inheritable");
@@ -413,6 +454,14 @@ mod tests {
         let mut s = base.clone();
         s.cap_bounding = u64::MAX;
         assert_eq!(verify(&plan(991, false), &s), Ok(()));
+
+        // Groups are not checked when no user switch was planned.
+        let mut s = base.clone();
+        s.gids = [0; 3];
+        s.groups = vec![0];
+        let mut p = plan(991, false);
+        p.final_groups = None;
+        assert_eq!(verify(&p, &s), Ok(()));
     }
 
     #[test]
