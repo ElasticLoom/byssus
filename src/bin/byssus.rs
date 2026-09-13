@@ -299,7 +299,10 @@ fn feature_check(name: &str, feature: Feature, required: bool) -> Check {
         (Feature::Missing, true) => Check::new(
             format!("kernel.{name}"),
             Level::Error,
-            "missing; Linux 5.12 or newer is required",
+            format!(
+                "unavailable: {}",
+                probe::missing_features_hint(probe::seccomp_filter_active())
+            ),
         ),
         (Feature::Missing, false) => Check::new(
             format!("kernel.{name}"),

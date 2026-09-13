@@ -74,8 +74,10 @@ byssus dry-run || fail "byssus dry-run"
 
 step "start the service"
 systemctl enable --now byssusd
-wait_for "service active" systemctl is-active --quiet byssusd
+wait_for "startup reconcile logged" sh -c "journalctl -u byssusd --no-pager | grep -q 'trigger=startup'"
+systemctl is-active --quiet byssusd || fail "service not active after startup"
 pid="$(systemctl show -p MainPID --value byssusd)"
+[[ "$pid" != 0 ]] || fail "no main process"
 grep -Eq "^Uid:\s+$uid\s+$uid\s+$uid\s+$uid$" "/proc/$pid/status" || fail "not running as byssus"
 grep -Eq '^CapEff:\s+0000000000200000$' "/proc/$pid/status" || fail "effective capabilities are not exactly CAP_SYS_ADMIN"
 grep -Eq '^NoNewPrivs:\s+1$' "/proc/$pid/status" || fail "no_new_privs not set"

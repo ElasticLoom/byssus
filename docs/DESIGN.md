@@ -628,9 +628,11 @@ The unit shipped in `contrib/` therefore uses **none** of: `ProtectSystem=`,
 `DynamicUser=`, `MountFlags=`. Hardening is achieved instead with capability
 bounding, `NoNewPrivileges=`, locked `noroot` securebits, a system call filter
 (`@system-service @mount`, minus `@privileged` and `@resources`, plus
-`capset`), namespace, address-family, realtime, SUID and W^X restrictions,
+`capset`), namespace, address-family, realtime and W^X restrictions,
 private network and IPC namespaces (which do not affect mounts), and
-`DevicePolicy=closed`.
+`DevicePolicy=closed`. `RestrictSUIDSGID=` is not used: systemd cannot filter
+`openat2()`'s mode argument and therefore blocks the syscall entirely, which
+would disable every confined path lookup.
 `MountFlags=shared` is explicitly not used: it would propagate systemd's own
 sandbox remounts back to the host.
 

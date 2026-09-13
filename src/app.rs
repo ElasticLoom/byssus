@@ -140,8 +140,9 @@ pub fn check_environment() -> anyhow::Result<Environment> {
     if !missing.is_empty() {
         let names: Vec<&str> = missing.iter().map(|(n, _)| *n).collect();
         bail!(
-            "kernel is missing required features: {} (Linux 5.12 or newer is required)",
-            names.join(", ")
+            "required kernel features are unavailable: {} ({})",
+            names.join(", "),
+            probe::missing_features_hint(probe::seccomp_filter_active())
         );
     }
     let proc =

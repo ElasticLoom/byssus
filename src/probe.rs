@@ -172,6 +172,30 @@ fn probe_statx() -> (Feature, Feature, Feature) {
     (mnt_id, mount_root, unique)
 }
 
+/// Whether this process runs under a seccomp filter (`Seccomp: 2` in
+/// `/proc/self/status`). Used to explain a missing feature: a filter can make
+/// a syscall return `ENOSYS` on a kernel that supports it.
+#[must_use]
+pub fn seccomp_filter_active() -> bool {
+    std::fs::read_to_string("/proc/self/status").is_ok_and(|status| {
+        status.lines().any(|line| {
+            line.split_once(':')
+                .is_some_and(|(k, v)| k == "Seccomp" && v.trim() == "2")
+        })
+    })
+}
+
+/// Explains why required features are unavailable.
+#[must_use]
+pub fn missing_features_hint(seccomp_filtered: bool) -> &'static str {
+    if seccomp_filtered {
+        "blocked by this process's seccomp filter, or not supported by the kernel (Linux 5.12 or newer is required). \
+         Under systemd, check for SystemCallFilter= changes and do not use RestrictSUIDSGID=, which blocks openat2"
+    } else {
+        "Linux 5.12 or newer is required"
+    }
+}
+
 /// Opens `/proc` and verifies it is procfs, so `/proc/self/fd` links can be
 /// trusted for unmounting.
 pub fn verify_procfs(proc_path: &Path) -> io::Result<OwnedFd> {
@@ -297,6 +321,14 @@ mod tests {
             Feature::Available
         );
         assert_eq!(Feature::Available.to_string(), "ok");
+    }
+
+    #[test]
+    fn missing_feature_hints() {
+        assert!(missing_features_hint(false).contains("5.12"));
+        assert!(missing_features_hint(true).contains("RestrictSUIDSGID"));
+        // Must not panic; the value depends on how tests are run.
+        let _ = seccomp_filter_active();
     }
 
     #[test]

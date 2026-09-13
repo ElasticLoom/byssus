@@ -223,7 +223,7 @@ The shipped unit:
 
 - runs as `byssus` with only `CAP_SYS_ADMIN` (ambient) and `NoNewPrivileges=yes`;
 - creates `/var/lib/byssus` (`StateDirectory=`, mode `0750`);
-- applies a system call filter, address-family, namespace, realtime, SUID,
+- applies a system call filter, address-family, namespace, realtime,
   personality and W^X restrictions, and private network and IPC namespaces;
 - starts before Docker, containerd and Podman so containers see every member.
 
@@ -231,8 +231,10 @@ The shipped unit:
 `PrivateTmp=`, `ReadWritePaths=` and many others (the full list is at the top
 of the unit file). They trap every mount inside the service. `byssusd` detects
 the resulting slave-only propagation at startup and refuses to run, rather
-than silently doing nothing useful. If you need to customize the unit, use a
-drop-in (`systemctl edit byssusd`) and keep to non-namespace options.
+than silently doing nothing useful. Do not add `RestrictSUIDSGID=` either:
+systemd implements it by blocking `openat2`, which Byssus requires. If you
+need to customize the unit, use a drop-in (`systemctl edit byssusd`) and keep
+to non-namespace options.
 
 ## Run without systemd
 
@@ -311,7 +313,7 @@ container runtimes start.
 | `another Byssus process holds the state lock` | `byssusd` is running; use `systemctl reload byssusd` instead of `byssus reconcile`. |
 | `refusing to run as root` | Configure `daemon.user` (or `--user`), or run under the shipped systemd unit. |
 | `CAP_SYS_ADMIN is not permitted` | Use the systemd unit, or `setcap cap_sys_admin+ep` on the binary. |
-| `kernel is missing required features` | Upgrade to Linux 5.12 or newer. |
+| `required kernel features are unavailable` | Upgrade to Linux 5.12 or newer. If the kernel is new enough, a seccomp filter is blocking the syscall — under systemd, remove `RestrictSUIDSGID=` or custom `SystemCallFilter=` changes. |
 
 ## Removing Byssus
 
