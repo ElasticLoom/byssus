@@ -78,15 +78,15 @@ step "start the service"
 touch "$root/membership/demo/alpha"
 systemctl enable --now byssusd
 systemctl is-active --quiet byssusd || fail "service not active after start"
+pid="$(systemctl show -p MainPID --value byssusd)"
+[[ "$pid" != 0 ]] || fail "no main process"
+[[ "$(readlink "/proc/$pid/ns/mnt")" == "$(readlink /proc/1/ns/mnt)" ]] || fail "daemon is not in the host mount namespace"
 test -f "$root/consumer/alpha/README" || fail "member not mounted when start returned (readiness sent too early?)"
 status_text="$(systemctl show -p StatusText --value byssusd)"
 [[ "$status_text" == "1 group(s), 1 mount(s)" ]] || fail "unexpected StatusText: $status_text"
-pid="$(systemctl show -p MainPID --value byssusd)"
-[[ "$pid" != 0 ]] || fail "no main process"
 grep -Eq "^Uid:\s+$uid\s+$uid\s+$uid\s+$uid$" "/proc/$pid/status" || fail "not running as byssus"
 grep -Eq '^CapEff:\s+0000000000200000$' "/proc/$pid/status" || fail "effective capabilities are not exactly CAP_SYS_ADMIN"
 grep -Eq '^NoNewPrivs:\s+1$' "/proc/$pid/status" || fail "no_new_privs not set"
-[[ "$(readlink "/proc/$pid/ns/mnt")" == "$(readlink /proc/1/ns/mnt)" ]] || fail "daemon is not in the host mount namespace"
 journalctl -u byssusd --no-pager | grep -q 'msg="privileges normalized"' || fail "no privileges log"
 
 step "the member is served to the consumer"
@@ -124,6 +124,17 @@ test -f "$root/consumer/alpha/README" || fail "mount lost on restart"
 step "stop preserves mounts"
 systemctl stop byssusd
 test -f "$root/consumer/alpha/README" || fail "mount lost on stop"
+
+step "a namespace-creating unit option is refused"
+systemctl stop byssusd
+install -d /etc/systemd/system/byssusd.service.d
+printf '[Service]\nPrivateNetwork=yes\n' > /etc/systemd/system/byssusd.service.d/private-network.conf
+systemctl daemon-reload
+if systemctl start byssusd 2>/dev/null; then fail "daemon started in a private mount namespace"; fi
+journalctl -u byssusd --no-pager -n 20 | grep -q 'are slave mounts' || fail "no slave-namespace refusal logged"
+rm -r /etc/systemd/system/byssusd.service.d
+systemctl daemon-reload
+systemctl reset-failed byssusd
 
 step "remove the package"
 systemctl start byssusd

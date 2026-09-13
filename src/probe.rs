@@ -237,6 +237,11 @@ pub enum PropagationCheck {
     Private,
     /// The mount is only a slave: almost certainly a non-host mount namespace.
     SlaveOnly,
+    /// The mount is shared but also a slave of another peer group. Mounts
+    /// propagate to its own peers and slaves but not back to its master, which
+    /// is what a service manager's private mount namespace looks like (for
+    /// example systemd's `PrivateNetwork=` or `PrivateMounts=`).
+    SharedAndSlave,
     /// The mount is unbindable.
     Unbindable,
     /// The mount could not be found or inspected.
@@ -251,9 +256,17 @@ impl PropagationCheck {
             Self::Shared => "shared".into(),
             Self::Private => "private (mounts will not reach containers via rslave)".into(),
             Self::SlaveOnly => "slave only (the daemon appears to run in a non-host mount namespace; mounts will be invisible outside it)".into(),
+            Self::SharedAndSlave => "shared but also a slave (the daemon appears to run in a private mount namespace, for example one created by a systemd option; mounts will not propagate back to the host)".into(),
             Self::Unbindable => "unbindable (mounts will not reach containers)".into(),
             Self::Unknown(reason) => format!("unknown ({reason})"),
         }
+    }
+
+    /// Whether the mount receives propagation from a master, so that mounts
+    /// created beneath it do not reach the master's side.
+    #[must_use]
+    pub fn is_slave(&self) -> bool {
+        matches!(self, Self::SlaveOnly | Self::SharedAndSlave)
     }
 }
 
@@ -270,9 +283,8 @@ pub fn check_propagation(target_root: BorrowedFd<'_>, table: &MountTable) -> Pro
 
 fn classify(table: &MountTable, mount_id: u64) -> PropagationCheck {
     match table.by_id(mount_id).map(|m| m.propagation) {
-        Some(Propagation::Shared { .. } | Propagation::SharedAndSlave { .. }) => {
-            PropagationCheck::Shared
-        }
+        Some(Propagation::Shared { .. }) => PropagationCheck::Shared,
+        Some(Propagation::SharedAndSlave { .. }) => PropagationCheck::SharedAndSlave,
         Some(Propagation::Private) => PropagationCheck::Private,
         Some(Propagation::Slave { .. }) => PropagationCheck::SlaveOnly,
         Some(Propagation::Unbindable) => PropagationCheck::Unbindable,
@@ -350,7 +362,9 @@ mod tests {
         assert_eq!(classify(&table, 1), PropagationCheck::Shared);
         assert_eq!(classify(&table, 2), PropagationCheck::Private);
         assert_eq!(classify(&table, 3), PropagationCheck::SlaveOnly);
-        assert_eq!(classify(&table, 4), PropagationCheck::Shared);
+        assert_eq!(classify(&table, 4), PropagationCheck::SharedAndSlave);
+        assert!(classify(&table, 3).is_slave() && classify(&table, 4).is_slave());
+        assert!(!classify(&table, 1).is_slave());
         assert_eq!(classify(&table, 5), PropagationCheck::Unbindable);
         assert!(matches!(classify(&table, 9), PropagationCheck::Unknown(_)));
     }

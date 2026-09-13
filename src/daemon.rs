@@ -29,7 +29,7 @@ pub struct Options {
     pub user: Option<String>,
     /// Permit running as root without a service user.
     pub allow_root: bool,
-    /// Permit slave-only target roots.
+    /// Permit target roots on slave mounts.
     pub allow_slave_namespace: bool,
 }
 

@@ -612,9 +612,10 @@ finds that mount in `/proc/self/mountinfo`, and inspects its optional fields:
 
 | Propagation of target root's mount | Meaning | Behavior |
 |-----------------------------------|---------|-----------|
-| `shared:N` | Correct. | OK. |
+| `shared:N` only | Correct. | OK. |
 | no propagation fields (`private`) | Mounts work on the host but will not reach containers. Valid for host-only use. | `warn`, continue. |
 | `master:N` without `shared:N` (`slave`) | The daemon is almost certainly running in a **non-host mount namespace** — for example a systemd unit using `ProtectSystem=`, `PrivateTmp=` or `ReadWritePaths=`. Mounts would be invisible outside the daemon. | `error`, refuse to start unless `--allow-slave-namespace` is given. |
+| both `shared:N` and `master:N` (`shared` and `slave`) | Mounts reach the mount's own peers and slaves but not its master. This is how a service manager's private mount namespace looks (for example systemd's `PrivateNetwork=` or `PrivateMounts=`), so containers attached on the host side would see nothing. | `error`, refuse to start unless `--allow-slave-namespace` is given. |
 
 When the daemon can read `/proc/1/ns/mnt` (typically only when started as
 root), it additionally compares its mount namespace with PID 1's and logs an
@@ -631,12 +632,13 @@ The unit shipped in `contrib/` therefore uses **none** of: `ProtectSystem=`,
 `MountAPIVFS=`, `ProtectKernelTunables=`, `ProtectKernelModules=`,
 `ProtectKernelLogs=`, `ProtectControlGroups=`, `ProtectProc=`, `ProcSubset=`,
 `RootDirectory=`, `RootImage=`, `LogNamespace=`, `PrivateUsers=`,
-`DynamicUser=`, `MountFlags=`. Hardening is achieved instead with capability
+`DynamicUser=`, `MountFlags=`, `PrivateNetwork=` (which implies
+`PrivateMounts=`) and `PrivateIPC=` (which also runs the service in its own
+mount namespace; both were found by the systemd end-to-end test in CI). Hardening is achieved instead with capability
 bounding, `NoNewPrivileges=`, locked `noroot` securebits, a system call filter
 (`@system-service @mount`, minus `@privileged` and `@resources`, plus
-`capset`), namespace, address-family, realtime and W^X restrictions,
-private network and IPC namespaces (which do not affect mounts), and
-`DevicePolicy=closed`. `RestrictSUIDSGID=` is not used: systemd cannot filter
+`capset`), namespace, address-family (`AF_UNIX` only), IP (`IPAddressDeny=any`),
+realtime and W^X restrictions, and `DevicePolicy=closed`. `RestrictSUIDSGID=` is not used: systemd cannot filter
 `openat2()`'s mode argument and therefore blocks the syscall entirely, which
 would disable every confined path lookup.
 `MountFlags=shared` is explicitly not used: it would propagate systemd's own

@@ -8,8 +8,9 @@
 #   ProtectKernelTunables= ProtectKernelModules= ProtectKernelLogs=
 #   ProtectControlGroups= ProtectProc= ProcSubset= RootDirectory= RootImage=
 #   LogNamespace= PrivateUsers= DynamicUser= MountFlags=
+#   PrivateNetwork= PrivateIPC=   (both also create a mount namespace)
 # Any of these silently traps every mount inside the service. byssusd detects
-# this at startup (slave-only propagation) and refuses to run.
+# this at startup (the target root appears as a slave mount) and refuses to run.
 #
 # Also do not add RestrictSUIDSGID=: systemd cannot inspect openat2()'s
 # arguments, so it blocks openat2 entirely, and byssusd needs openat2 for every
@@ -57,8 +58,6 @@ RestrictRealtime=yes
 RestrictNamespaces=yes
 RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any
-PrivateNetwork=yes
-PrivateIPC=yes
 ProtectHostname=yes
 ProtectClock=yes
 DevicePolicy=closed

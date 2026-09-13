@@ -37,7 +37,7 @@ struct Cli {
     #[arg(long)]
     allow_root: bool,
 
-    /// Permit target roots on slave-only mounts (normally a sign that the
+    /// Permit target roots on slave mounts (normally a sign that the
     /// daemon runs in a non-host mount namespace).
     #[arg(long)]
     allow_slave_namespace: bool,

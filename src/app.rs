@@ -194,7 +194,7 @@ pub fn check_propagation(
             PropagationCheck::Shared => {
                 tracing::debug!(group = %name, target_root = %target_root, propagation = "shared");
             }
-            PropagationCheck::SlaveOnly => {
+            check if check.is_slave() => {
                 tracing::error!(group = %name, target_root = %target_root, msg = %check.describe());
                 slave_groups.push(name.to_string());
             }
@@ -209,7 +209,7 @@ pub fn check_propagation(
     }
     if !slave_groups.is_empty() && !allow_slave {
         bail!(
-            "target roots of groups {} are slave-only mounts; refusing to start (use --allow-slave-namespace to override)",
+            "target roots of groups {} are slave mounts, so mounts would not propagate back to the host; refusing to start (is byssusd in a private mount namespace? Use --allow-slave-namespace to override)",
             slave_groups.join(", ")
         );
     }

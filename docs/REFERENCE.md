@@ -140,7 +140,7 @@ byssusd [OPTIONS]
   --log-level <LEVEL>      error|warn|info|debug|trace [default: info]
   --user <USER>            Service user to switch to when started as root
   --allow-root             Permit running as UID 0 (development/testing)
-  --allow-slave-namespace  Permit a slave-only target root mount
+  --allow-slave-namespace  Permit a target root on a slave mount
 ```
 
 Signals: `SIGHUP` reloads; `SIGTERM`/`SIGINT` shut down cleanly.
@@ -180,7 +180,7 @@ byssus version
   validation: parsing, ownership and modes (for a candidate, only the file
   itself; its future directory is the drop-in directory), cross-group rules,
   paths, opening every root and membership directory, creating watches, and
-  propagation (slave-only is an error unless `--allow-slave-namespace`). Run
+  propagation (a slave target root is an error unless `--allow-slave-namespace`). Run
   as root with `daemon.user` configured, it checks access as that user.
   Exit status `0` if a reload would accept the configuration, `1` otherwise.
   It does not compare against the running daemon's configuration, so it

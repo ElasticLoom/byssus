@@ -381,7 +381,7 @@ fn slave_only_target_root_is_refused() {
 
     let (code, log) = Daemon::start(&d, &[]).wait_exit();
     assert_eq!(code, 1, "{log}");
-    assert!(log.contains("slave-only"), "{log}");
+    assert!(log.contains("are slave mounts"), "{log}");
 
     let daemon = Daemon::start(&d, &["--allow-slave-namespace"]);
     daemon.wait_log("msg=\"byssusd started\"");

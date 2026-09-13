@@ -208,7 +208,7 @@ systemctl reload byssusd
 To remove a tenant, check with `byssus check --remove acme.toml`, delete the
 fragment and reload; the tenant's mounts are removed. `byssus check` also
 verifies that the membership and root directories exist and can be opened by
-the service user, and that target roots are not on slave-only mounts.
+the service user, and that target roots are not on slave mounts.
 
 Create a tenant's directories — source root, target roots on a shared mount,
 membership directories — **before** installing its fragment; a fragment that

@@ -53,7 +53,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] `sys`: signal masking + `signalfd` wrapper
 - [x] `probe`: kernel feature probes (`open_tree`, `move_mount`, `openat2`, `mount_setattr`, `statx` mount fields, `STATX_MNT_ID_UNIQUE`); only `ENOSYS` means missing
 - [x] `probe`: `/proc` verification via `fstatfs`
-- [x] `probe`: propagation check via `statx` mount ID + mountinfo; private → warn, slave-only → error
+- [x] `probe`: propagation check via `statx` mount ID + mountinfo; private → warn, slave (including shared+slave) → error
 - [x] `probe`: best-effort `/proc/1/ns/mnt` comparison
 - [x] `fsops`: confined `openat2` resolution helpers
 - [x] `fsops`: target directory creation walk (`mkdirat` + `openat2`)

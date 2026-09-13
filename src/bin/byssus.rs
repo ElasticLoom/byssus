@@ -110,7 +110,7 @@ enum Command {
         #[arg(long = "remove", value_name = "NAME")]
         remove: Vec<String>,
 
-        /// Treat slave-only target roots as acceptable (as byssusd
+        /// Treat target roots on slave mounts as acceptable (as byssusd
         /// --allow-slave-namespace would).
         #[arg(long)]
         allow_slave_namespace: bool,
@@ -133,7 +133,7 @@ struct PrivilegeArgs {
     #[arg(long)]
     allow_root: bool,
 
-    /// Permit target roots on slave-only mounts.
+    /// Permit target roots on slave mounts.
     #[arg(long)]
     allow_slave_namespace: bool,
 }
@@ -438,7 +438,7 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
             PropagationCheck::Private
             | PropagationCheck::Unbindable
             | PropagationCheck::Unknown(_) => Level::Warn,
-            PropagationCheck::SlaveOnly => Level::Error,
+            PropagationCheck::SlaveOnly | PropagationCheck::SharedAndSlave => Level::Error,
         };
         extra.insert(name, (check.describe(), level, vec![]));
     }
@@ -643,7 +643,7 @@ fn check(
         );
         match propagation {
             PropagationCheck::Shared => {}
-            PropagationCheck::SlaveOnly if !allow_slave_namespace => report.errors.push(message),
+            ref check if check.is_slave() && !allow_slave_namespace => report.errors.push(message),
             _ => report.warnings.push(message),
         }
     }

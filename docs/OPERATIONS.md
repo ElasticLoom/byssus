@@ -224,7 +224,7 @@ The shipped unit:
 - runs as `byssus` with only `CAP_SYS_ADMIN` (ambient) and `NoNewPrivileges=yes`;
 - creates `/var/lib/byssus` (`StateDirectory=`, mode `0750`);
 - applies a system call filter, address-family, namespace, realtime,
-  personality and W^X restrictions, and private network and IPC namespaces;
+  personality and W^X restrictions, and denies all IP traffic;
 - uses `Type=notify`: `byssusd` reports ready only after its startup
   reconcile, and the unit starts before Docker, containerd and Podman, so
   containers see every member from the start;
@@ -234,7 +234,7 @@ The shipped unit:
 **Do not add options that create a mount namespace** — `ProtectSystem=`,
 `PrivateTmp=`, `ReadWritePaths=` and many others (the full list is at the top
 of the unit file). They trap every mount inside the service. `byssusd` detects
-the resulting slave-only propagation at startup and refuses to run, rather
+the resulting slave propagation at startup and refuses to run, rather
 than silently doing nothing useful. Do not add `RestrictSUIDSGID=` either:
 systemd implements it by blocking `openat2`, which Byssus requires. If you
 need to customize the unit, use a drop-in (`systemctl edit byssusd`) and keep
@@ -312,7 +312,7 @@ container runtimes start.
 | `op=conflict ... not the recorded mount` | Byssus's mount was replaced by another. Resolve manually; Byssus will re-create its mount once the target is free. |
 | `op=conflict ... several members resolve to the same target` | Two members (possibly in different groups) map to one target. Adjust templates. |
 | `private (mounts will not reach containers via rslave)` | The target root is not on a shared mount. See [Create the propagation anchor](#create-the-propagation-anchor). |
-| `slave-only mounts; refusing to start` | `byssusd` is running in its own mount namespace — usually a systemd option such as `ProtectSystem=` or `PrivateTmp=`. Remove it. |
+| `are slave mounts ... refusing to start` | `byssusd` is running in its own mount namespace — usually a systemd option such as `ProtectSystem=`, `PrivateTmp=`, `PrivateNetwork=` or `PrivateIPC=`. Remove it. |
 | `op=degrade` | A membership directory was moved, deleted or unmounted. Mounts are kept. Restore the directory and `systemctl reload byssusd`. |
 | `state file is corrupt` | The corrupt file was renamed to `state.json.corrupt-<time>`. Existing Byssus mounts now show as conflicts; unmount them manually (or reboot), then let Byssus re-create them. |
 | `another Byssus process holds the state lock` | `byssusd` is running; use `systemctl reload byssusd` instead of `byssus reconcile`. |

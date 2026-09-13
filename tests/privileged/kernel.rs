@@ -333,6 +333,15 @@ fn propagation_check_classifies_mounts() {
     assert_eq!(check(&shared), PropagationCheck::Shared);
     assert_eq!(check(&private), PropagationCheck::Private);
     assert_eq!(check(&consumer), PropagationCheck::SlaveOnly);
+    // A slave that is also shared (as in a service manager's private mount
+    // namespace) is distinguished too.
+    rustix::mount::mount_change(&consumer, rustix::mount::MountPropagationFlags::SHARED).unwrap();
+    let table = MountTable::read_self().unwrap();
+    let fd = fsops::open_root(&consumer).unwrap();
+    assert_eq!(
+        probe::check_propagation(fd.as_fd(), &table),
+        PropagationCheck::SharedAndSlave
+    );
     // A plain directory reports the mount containing it.
     let inner = sb.mkdir("shared/inner");
     assert_eq!(check(&inner), PropagationCheck::Shared);
