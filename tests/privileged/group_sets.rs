@@ -11,6 +11,7 @@ use crate::daemon::{Daemon, wait_until};
 
 /// A deployment laid out like a multi-tenant platform, with one group set
 /// whose groups are orgs and whose subgroups are user-created groups.
+/// Periodic resync is disabled, so every change must be event-driven.
 struct Platform {
     d: Deployment,
     orgs: PathBuf,
@@ -23,7 +24,7 @@ impl Platform {
         d.sb.mkdir("membership");
         let p = |s: &str| d.path(s).display().to_string();
         d.write_main_config(&format!(
-            "[daemon]\nstate_dir = \"{}\"\nresync_interval_secs = 1\n\n\
+            "[daemon]\nstate_dir = \"{}\"\nresync_interval_secs = 0\n\n\
              [group_sets.projects]\nmembership_root = \"{}\"\nsource_root = \"{}\"\n\
              source = \"{{group}}/projects/{{name}}/workspace\"\ntarget_root = \"{}\"\n\
              target = \"{{group}}/groups/{{subgroup}}/view/{{name}}\"\n",
@@ -176,6 +177,46 @@ fn subgroups_are_created_and_removed_at_runtime() {
         "{}",
         daemon.log()
     );
+    assert_eq!(daemon.stop(), 0);
+}
+
+#[test]
+#[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
+fn replaced_subgroup_directories_are_followed() {
+    let p = Platform::new();
+    p.project("acme", "webapp");
+    p.project("acme", "api");
+    let monitoring = p.view("acme", "monitoring");
+    p.subgroup("acme", "monitoring");
+    p.member("acme", "monitoring", "api");
+    let daemon = Daemon::started(&p.d);
+    wait_until("api in acme/monitoring", || {
+        monitoring.join("api/README").exists()
+    });
+
+    // A subgroup directory replaced by a new one within one burst of
+    // changes is followed: the old incarnation's members go, and later
+    // changes in the new one are seen.
+    fs::rename(
+        p.d.path("membership/acme/monitoring"),
+        p.d.path("monitoring-old"),
+    )
+    .unwrap();
+    p.subgroup("acme", "monitoring");
+    p.member("acme", "monitoring", "webapp");
+    wait_until("webapp in replaced acme/monitoring", || {
+        monitoring.join("webapp/README").exists() && !monitoring.join("api/README").exists()
+    });
+    fs::write(p.d.path("monitoring-old/stale"), "").unwrap();
+    p.member("acme", "monitoring", "api");
+    wait_until("api back in acme/monitoring", || {
+        monitoring.join("api/README").exists()
+    });
+    assert!(!monitoring.join("stale").exists());
+    fs::remove_file(p.d.path("membership/acme/monitoring/webapp")).unwrap();
+    wait_until("webapp removed from acme/monitoring", || {
+        !monitoring.join("webapp/README").exists()
+    });
     assert_eq!(daemon.stop(), 0);
 }
 

@@ -101,9 +101,12 @@ impl Watcher {
     }
 
     /// Watches the directories of set groups (and, for sets with subgroups,
-    /// the intermediate directories) in `runtime` that are not watched yet,
-    /// and stops watching those that are gone. Call after each discovery,
-    /// before membership is read.
+    /// the intermediate directories) in `runtime`, and stops watching those
+    /// that are gone. Call after each discovery, before membership is read.
+    ///
+    /// Every directory is re-added on each call: watches follow inodes, so a
+    /// group directory replaced by a new one of the same name gets a new
+    /// watch descriptor, and the old watch is released.
     pub fn sync(&mut self, runtime: &Runtime) {
         let mut current: BTreeMap<&GroupId, &std::path::Path> = runtime
             .groups
@@ -125,28 +128,50 @@ impl Watcher {
             .collect();
         for id in gone {
             if let Some(wd) = self.set_groups.remove(&id) {
-                self.watches.remove(&wd);
-                // The watch may already be gone (directory deleted).
-                let _ = inotify::remove_watch(&self.fd, wd);
+                self.release(wd);
             }
         }
         for (id, path) in current {
-            if self.set_groups.contains_key(id) {
-                continue;
-            }
-            match self.add(path, MEMBERSHIP_EVENTS | WatchFlags::DONT_FOLLOW) {
-                Ok(wd) => {
-                    self.watches.insert(wd, Watched::Group(id.clone()));
-                    self.set_groups.insert(id.clone(), wd);
-                }
+            let wd = match self.add(path, MEMBERSHIP_EVENTS | WatchFlags::DONT_FOLLOW) {
+                Ok(wd) => wd,
                 // Removed since discovery; the next pass notices.
-                Err(e) if e.raw_os_error() == Some(libc::ENOENT) => {}
-                Err(e) => tracing::warn!(
-                    group = %id,
-                    msg = "cannot watch group set directory; changes are picked up at the next resync",
-                    error = %e,
-                ),
+                Err(e) if e.raw_os_error() == Some(libc::ENOENT) => {
+                    if let Some(old) = self.set_groups.remove(id) {
+                        self.release(old);
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        group = %id,
+                        msg = "cannot watch group set directory; changes are picked up at the next resync",
+                        error = %e,
+                    );
+                    continue;
+                }
+            };
+            match self.set_groups.insert(id.clone(), wd) {
+                Some(old) if old != wd => self.release(old),
+                _ => {}
             }
+            // Never relabel a watch that another directory shares (possible
+            // only through bind mounts); events from it are membership
+            // changes either way.
+            self.watches
+                .entry(wd)
+                .or_insert_with(|| Watched::Group(id.clone()));
+        }
+    }
+
+    /// Stops watching `wd` unless another set group still uses it. The
+    /// kernel may already have removed the watch (directory deleted).
+    fn release(&mut self, wd: i32) {
+        if self.set_groups.values().any(|&other| other == wd) {
+            return;
+        }
+        if matches!(self.watches.get(&wd), Some(Watched::Group(id)) if id.set().is_some()) {
+            self.watches.remove(&wd);
+            let _ = inotify::remove_watch(&self.fd, wd);
         }
     }
 
@@ -304,6 +329,29 @@ mod tests {
         watcher.sync(&runtime);
         fs::write(root.join("acme/libcurl"), "").unwrap();
         assert!(watcher.drain().unwrap().membership_changed);
+
+        // A group directory replaced by a new one of the same name is
+        // watched in its new incarnation, and the old watch is released.
+        let old_wd = watcher.set_groups[&GroupId::parse("research/acme").unwrap()];
+        fs::rename(root.join("acme"), dir.path().join("old-acme")).unwrap();
+        fs::create_dir(root.join("acme")).unwrap();
+        watcher.drain().unwrap();
+        runtime.discover(&BTreeSet::new());
+        watcher.sync(&runtime);
+        let new_wd = watcher.set_groups[&GroupId::parse("research/acme").unwrap()];
+        assert_ne!(old_wd, new_wd);
+        assert!(!watcher.watches.contains_key(&old_wd));
+        fs::write(dir.path().join("old-acme/stale"), "").unwrap();
+        assert_eq!(watcher.drain().unwrap(), Changes::default());
+        fs::write(root.join("acme/libcurl"), "").unwrap();
+        assert!(watcher.drain().unwrap().membership_changed);
+        // Re-syncing an unchanged directory keeps its watch.
+        runtime.discover(&BTreeSet::new());
+        watcher.sync(&runtime);
+        assert_eq!(
+            watcher.set_groups[&GroupId::parse("research/acme").unwrap()],
+            new_wd
+        );
 
         // Deleting a set group is a change, not a loss.
         fs::remove_file(root.join("acme/libcurl")).unwrap();
