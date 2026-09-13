@@ -39,7 +39,7 @@ echo "installed: ok"
 SH
 
 echo "==> Debian/Ubuntu (.deb)"
-"$docker" run --rm -v "$dist:/dist:ro" ubuntu:24.04 sh -euc "
+"$docker" run --rm --platform linux/amd64 --pull always -v "$dist:/dist:ro" ubuntu:24.04 sh -euc "
     dpkg -i /dist/$(basename "$deb")
     $verify_installed
     # Container images may exclude /usr/share/doc on disk; check the package.
@@ -57,7 +57,7 @@ echo "==> Debian/Ubuntu (.deb)"
 "
 
 echo "==> Fedora (.rpm)"
-"$docker" run --rm -v "$dist:/dist:ro" fedora:latest sh -euc "
+"$docker" run --rm --platform linux/amd64 --pull always -v "$dist:/dist:ro" fedora:latest sh -euc "
     rpm -i /dist/$(basename "$rpm")
     $verify_installed
     rpm -ql byssus | grep -q /usr/share/doc/byssus/OPERATIONS.md
