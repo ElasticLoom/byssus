@@ -432,13 +432,13 @@ fn check_validates_candidate_fragments_without_installing() {
     let acme = d.path("staging/acme.toml");
     write_mode(
         &acme,
-        &fragment(&d, "acme-vigil", "members-acme", "view-acme"),
+        &fragment(&d, "acme-research", "members-acme", "view-acme"),
         0o644,
     );
     let out = d.byssus(&["check", "--add", acme.to_str().unwrap()]);
     assert_success(&out);
     let report = text(&out.stdout);
-    assert!(report.contains("group: acme-vigil"), "{report}");
+    assert!(report.contains("group: acme-research"), "{report}");
     assert!(report.contains("result: valid"), "{report}");
     assert!(
         !d.path("etc/conf.d/acme.toml").exists(),
@@ -449,7 +449,7 @@ fn check_validates_candidate_fragments_without_installing() {
     let out = d.byssus(&["check", "--add", acme.to_str().unwrap(), "--format", "json"]);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(json["valid"], true);
-    assert_eq!(json["groups"], serde_json::json!(["acme-vigil", "g"]));
+    assert_eq!(json["groups"], serde_json::json!(["acme-research", "g"]));
 
     // A candidate reusing an installed group name is rejected.
     let dup = d.path("staging/dup.toml");
@@ -482,7 +482,7 @@ fn check_validates_candidate_fragments_without_installing() {
     fs::copy(&acme, d.path("etc/conf.d/acme.toml")).unwrap();
     let out = d.byssus(&["check", "--remove", "acme.toml"]);
     assert_success(&out);
-    assert!(!text(&out.stdout).contains("acme-vigil"));
+    assert!(!text(&out.stdout).contains("acme-research"));
     let out = d.byssus(&["check", "--remove", "nope.toml"]);
     assert!(!out.status.success());
 }
