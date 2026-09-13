@@ -41,10 +41,10 @@ fn setup(sb: &Sandbox, name: &str) -> Member {
     }
 }
 
-fn mount_member(m: &Member, name: &str, attrs: &MountAttrs) -> byssus::identity::MountIdentity {
+fn mount_member(m: &Member, name: &str, attrs: MountAttrs) -> byssus::identity::MountIdentity {
     let source = fsops::resolve_dir(m.source_root.as_fd(), &format!("{name}/workspace")).unwrap();
     let target = fsops::ensure_dirs_beneath(m.target_root.as_fd(), &[name.to_owned()]).unwrap();
-    mount::create_bind(source.as_fd(), target.as_fd(), attrs, unique()).unwrap()
+    mount::create_bind(source.as_fd(), target.as_fd(), &attrs, unique()).unwrap()
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn mount_member(m: &Member, name: &str, attrs: &MountAttrs) -> byssus::identity:
 fn bind_mount_is_readonly_and_identified() {
     let sb = Sandbox::new();
     let m = setup(&sb, "libcurl");
-    let id = mount_member(&m, "libcurl", &DEFAULT);
+    let id = mount_member(&m, "libcurl", DEFAULT);
 
     assert_eq!(
         fs::read_to_string(sb.path("view/libcurl/hello.txt")).unwrap(),
@@ -94,7 +94,7 @@ fn noexec_is_enforced() {
     let script = sb.write("src/tool/workspace/run.sh", "#!/bin/sh\nexit 0\n");
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
     let m = setup(&sb, "tool");
-    mount_member(&m, "tool", &DEFAULT);
+    mount_member(&m, "tool", DEFAULT);
     let err = std::process::Command::new(sb.path("view/tool/run.sh"))
         .status()
         .unwrap_err();
@@ -112,7 +112,7 @@ fn nosymfollow_is_applied_when_configured() {
         nosymfollow: true,
         ..DEFAULT
     };
-    mount_member(&m, "s", &attrs);
+    mount_member(&m, "s", attrs);
     let err = fs::read_to_string(sb.path("view/s/link")).unwrap_err();
     assert_eq!(errno_of(&err), libc::ELOOP);
     match mount::inspect(m.target_root.as_fd(), "s", unique()) {
@@ -132,7 +132,7 @@ fn submounts_inside_source_are_not_exposed() {
     assert!(sb.path("src/m/workspace/secret/sensitive.txt").exists());
 
     let m = setup(&sb, "m");
-    mount_member(&m, "m", &DEFAULT);
+    mount_member(&m, "m", DEFAULT);
 
     assert!(sb.path("view/m/visible.txt").exists());
     assert!(sb.path("view/m/secret").is_dir());
@@ -148,7 +148,7 @@ fn submounts_inside_source_are_not_exposed() {
 fn verified_unmount_removes_only_our_mount() {
     let sb = Sandbox::new();
     let m = setup(&sb, "a");
-    let id = mount_member(&m, "a", &DEFAULT);
+    let id = mount_member(&m, "a", DEFAULT);
 
     mount::unmount_verified(m.target_root.as_fd(), "a", &id, unique()).unwrap();
     assert_eq!(
@@ -172,7 +172,7 @@ fn replaced_mount_is_detected_and_left_alone() {
     let sb = Sandbox::new();
     sb.write("src/other/workspace/foreign.txt", "foreign");
     let m = setup(&sb, "a");
-    let id = mount_member(&m, "a", &DEFAULT);
+    let id = mount_member(&m, "a", DEFAULT);
 
     // Someone unmounts ours and mounts something else at the same target.
     rustix::mount::unmount(sb.path("view/a").as_path(), UnmountFlags::DETACH).unwrap();
@@ -202,7 +202,7 @@ fn stacked_mount_on_top_is_a_mismatch() {
     let sb = Sandbox::new();
     sb.write("src/other/workspace/top.txt", "top");
     let m = setup(&sb, "a");
-    let id = mount_member(&m, "a", &DEFAULT);
+    let id = mount_member(&m, "a", DEFAULT);
     rustix::mount::mount_bind(
         sb.path("src/other/workspace").as_path(),
         sb.path("view/a").as_path(),
@@ -225,7 +225,7 @@ fn restrictions_are_added_in_place() {
         noexec: false,
         nosymfollow: false,
     };
-    let id = mount_member(&m, "a", &loose);
+    let id = mount_member(&m, "a", loose);
     fs::write(sb.path("view/a/writable.txt"), "w").unwrap();
 
     mount::add_restrictions(m.target_root.as_fd(), "a", &id, &DEFAULT, unique()).unwrap();
@@ -332,7 +332,7 @@ fn symlinked_target_is_refused() {
 fn remount_of_same_source_is_a_mismatch() {
     let sb = Sandbox::new();
     let m = setup(&sb, "a");
-    let id = mount_member(&m, "a", &DEFAULT);
+    let id = mount_member(&m, "a", DEFAULT);
     // Same source directory, same target, but a different mount.
     rustix::mount::unmount(sb.path("view/a").as_path(), UnmountFlags::DETACH).unwrap();
     rustix::mount::mount_bind(
