@@ -55,6 +55,8 @@ struct Daemon {
     next_resync: Option<Instant>,
     /// A pending inotify-triggered pass: (first change, due time).
     pending: Option<(Instant, Instant)>,
+    /// Observation notes already logged.
+    notes: reconcile::NoteLog,
 }
 
 /// Runs the daemon until `SIGTERM` or `SIGINT`.
@@ -102,6 +104,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         epoll,
         next_resync: None,
         pending: None,
+        notes: reconcile::NoteLog::default(),
     };
     tracing::info!(
         msg = "byssusd started",
@@ -130,6 +133,7 @@ impl Daemon {
             &self.degraded,
             self.unique_supported,
             trigger,
+            &mut self.notes,
         );
         for note in &pass.observed.notes {
             if let reconcile::observe::Note::MembershipDeleted { group } = note {

@@ -99,11 +99,17 @@ pub struct Membership {
     pub members: BTreeSet<Name>,
     /// Rejected entries, in the order encountered.
     pub rejected: Vec<Rejection>,
+    /// Hidden entries (names beginning with `.`), rendered safely for logs.
+    /// They are ignored without warning so applications can create a file
+    /// under a hidden name and rename it into place, and so tool artifacts
+    /// such as `.gitkeep` or editor swap files are not reported.
+    pub ignored: Vec<String>,
 }
 
 impl Membership {
     /// Builds membership from `(file_name, kind)` entries. The `.` and `..`
-    /// directory entries are skipped silently.
+    /// directory entries are skipped; other hidden entries are recorded in
+    /// [`Membership::ignored`].
     pub fn from_entries<'a, I>(entries: I) -> Self
     where
         I: IntoIterator<Item = (&'a [u8], Result<EntryKind, String>)>,
@@ -111,6 +117,10 @@ impl Membership {
         let mut membership = Self::default();
         for (file_name, kind) in entries {
             if file_name == b"." || file_name == b".." {
+                continue;
+            }
+            if file_name.starts_with(b".") {
+                membership.ignored.push(display_bytes(file_name));
                 continue;
             }
             match classify(file_name, kind) {
@@ -196,6 +206,7 @@ mod tests {
         let names: Vec<_> = m.members.iter().map(Name::as_str).collect();
         assert_eq!(names, ["a", "b"]);
         let rejected: Vec<_> = m.rejected.iter().map(|r| r.display_name.as_str()).collect();
-        assert_eq!(rejected, ["link", ".swp", "full"]);
+        assert_eq!(rejected, ["link", "full"]);
+        assert_eq!(m.ignored, [".swp"]);
     }
 }

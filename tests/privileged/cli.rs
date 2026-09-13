@@ -171,11 +171,12 @@ fn invalid_membership_entries_are_rejected() {
     std::os::unix::fs::symlink(d.path("members/good"), d.path("members/linked")).unwrap();
     fs::create_dir(d.path("members/dir")).unwrap();
     fs::write(d.path("members/.hidden"), "").unwrap();
+    fs::write(d.path("members/.gitkeep"), "").unwrap();
 
     let out = d.reconcile();
     assert_success(&out);
     let log = text(&out.stderr);
-    for name in ["full", "linked", "dir", ".hidden"] {
+    for name in ["full", "linked", "dir"] {
         assert!(
             log.contains(&format!("op=reject group=g name={name}")),
             "{name}: {log}"
@@ -185,8 +186,31 @@ fn invalid_membership_entries_are_rejected() {
             "{name} was mounted"
         );
     }
+    // Hidden entries are ignored without a warning.
+    assert!(!log.contains("name=.hidden"), "{log}");
+    assert!(!log.contains("name=.gitkeep"), "{log}");
+    assert!(!d.path("view/.hidden").exists());
     assert!(d.visible("good"));
     assert_eq!(d.state().len(), 1);
+
+    // status lists rejected entries (a warning, so exit 0) and ignored counts.
+    let out = d.byssus(&["status"]);
+    assert_success(&out);
+    let status = text(&out.stdout);
+    assert!(
+        status.contains("ignored: group 'g': 2 hidden entries"),
+        "{status}"
+    );
+    assert!(
+        status.contains("g/linked  state=rejected  detail=\"not a regular file (symbolic link)\""),
+        "{status}"
+    );
+    assert!(status.contains("g/full  state=rejected"), "{status}");
+
+    let out = d.byssus(&["dry-run", "--format", "json"]);
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["groups"][0]["rejected"], 3);
+    assert_eq!(json["groups"][0]["ignored"], 2);
 }
 
 #[test]

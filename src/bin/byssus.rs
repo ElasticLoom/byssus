@@ -241,6 +241,11 @@ fn status(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
         state_file,
         ownership_known,
         notes,
+        ignored: observed
+            .ignored
+            .iter()
+            .map(|(group, names)| (group.to_string(), names.len()))
+            .collect(),
         members: report::member_statuses(&observed, &plan, &state, ownership_known),
     };
     print_report(format, || report.to_text(), &report)?;
@@ -396,7 +401,7 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
 
     let degraded: BTreeSet<Name> = open_errors.iter().map(|e| e.group.clone()).collect();
     let observed = observe::observe(&mut runtime, &state, &degraded, features.unique_mount_ids());
-    reconcile::log_notes(&observed.notes, Trigger::Cli);
+    reconcile::NoteLog::default().report(&observed, Trigger::Cli);
     let plan = plan::plan(plan::PlanInput {
         desired: &observed.desired,
         state: &state,
@@ -437,6 +442,7 @@ fn reconcile_once(source: &ConfigSource, args: &PrivilegeArgs) -> anyhow::Result
         &BTreeSet::new(),
         environment.features.unique_mount_ids(),
         Trigger::Cli,
+        &mut reconcile::NoteLog::default(),
     );
     // Persist even when nothing changed, as on daemon shutdown.
     writer

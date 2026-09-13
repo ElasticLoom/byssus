@@ -164,7 +164,7 @@ As root with `daemon.user` configured, `dry-run` switches to that user and
 drops every capability first, so permission problems show up exactly as the
 daemon would experience them. It reports kernel features, `/proc`,
 configuration paths, state, propagation, and per group: members, rejected
-membership entries, sources that resolve or not, existing mounts, what a
+membership entries (by name, with the reason), ignored hidden entries, sources that resolve or not, existing mounts, what a
 reconcile would create or remove, and conflicts. It exits 1 if anything is an
 error.
 
@@ -265,8 +265,12 @@ Rules:
 - A member file must be an **empty regular file**. Symlinks, directories and
   non-empty files are rejected (and a member whose file becomes non-empty is
   removed).
-- Files whose names start with `.` are ignored, so an application can prepare
-  a file under a hidden name and `rename(2)` it into place.
+- Files whose names start with `.` are ignored without a warning, so an
+  application can prepare a file under a hidden name and `rename(2)` it into
+  place, and files like `.gitkeep` are harmless.
+- Creating a membership file never fails because of Byssus: the daemon picks
+  changes up asynchronously. Check `byssus status` (or its JSON output) to see
+  whether an entry was accepted or rejected, and why.
 - Changes take effect about 150 ms after the last change in a burst.
 - Adding a member before its source directory exists is fine: it is mounted
   at the next periodic resync after the source appears (default 60 s), or
@@ -291,8 +295,10 @@ systemctl reload byssusd      # sends SIGHUP
 | Follow logs | `journalctl -u byssusd -f` |
 | One-off reconcile (daemon stopped) | `sudo byssus reconcile --user byssus` |
 
-`byssus status` exits 1 if any member is in an error state, so it can be used
-for monitoring. If the state file cannot be read (for example, the caller is
+`byssus status` exits 1 if any member is in an error state (conflicts,
+unavailable targets or groups), so it can be used for monitoring. Rejected
+membership entries and missing sources are listed as warnings and do not
+change the exit status. If the state file cannot be read (for example, the caller is
 not in the `byssus` group) it says so and shows what it can determine from the
 kernel alone.
 
@@ -317,7 +323,8 @@ container runtimes start.
 
 | Symptom | Likely cause and fix |
 |---------|----------------------|
-| `op=reject ... reason="name fails allowlist"` | Membership file name has disallowed characters or starts with `.`. Rename it. |
+| `op=reject ... reason="name fails allowlist"` | Membership file name has disallowed characters. Rename it. Each rejection is logged once; `byssus status` lists current ones. |
+| A member starting with `.` is never mounted, with no warning | Hidden names are ignored by design. Rename the file without the leading `.`. |
 | `op=reject ... not a regular file` / `file is not empty` | Membership entries must be empty regular files. |
 | `op=skip ... No such file or directory` | The member's source does not exist yet. It is mounted once it appears. |
 | `op=skip ... Permission denied` (source) | `byssus` lacks search permission on some directory in the source path. Grant `setfacl -m u:byssus:x` on each directory; confirm with `sudo byssus dry-run`. |

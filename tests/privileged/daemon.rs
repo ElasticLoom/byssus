@@ -419,3 +419,41 @@ fn non_empty_file_written_later_removes_member() {
     assert!(daemon.count("op=reject group=g name=a") >= 1);
     assert_eq!(daemon.stop(), 0);
 }
+
+#[test]
+#[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
+fn persistent_rejection_is_logged_once_and_cleared() {
+    let d = Deployment::new();
+    d.add_source("a");
+    d.join("a");
+    std::os::unix::fs::symlink(d.path("members/a"), d.path("members/link")).unwrap();
+    fs::write(d.path("members/.gitkeep"), "").unwrap();
+    let daemon = Daemon::started(&d);
+    daemon.wait_log("op=reject group=g name=link");
+
+    // Several resync passes (interval 1s) must not repeat the warning.
+    let resyncs_before = daemon.count("trigger=resync");
+    wait_until("three resyncs", || {
+        daemon.count("trigger=resync") >= resyncs_before + 3
+    });
+    assert_eq!(
+        daemon.count("op=reject group=g name=link"),
+        1,
+        "{}",
+        daemon.log()
+    );
+    assert!(
+        !daemon
+            .log()
+            .contains("level=warn op=reject group=g name=.gitkeep")
+    );
+    assert!(
+        daemon.log().contains("op=ignore group=g"),
+        "{}",
+        daemon.log()
+    );
+
+    fs::remove_file(d.path("members/link")).unwrap();
+    daemon.wait_log("op=reject_cleared group=g name=link");
+    assert_eq!(daemon.stop(), 0);
+}

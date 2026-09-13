@@ -86,6 +86,9 @@ pub enum MemberState {
     RelocationBlocked,
     /// The group could not be inspected.
     GroupUnavailable,
+    /// A membership entry was rejected (bad name, not an empty regular
+    /// file, or an unusable template interpolation).
+    Rejected,
 }
 
 impl MemberState {
@@ -104,6 +107,7 @@ impl MemberState {
             Self::Collision => "collision",
             Self::RelocationBlocked => "relocation_blocked",
             Self::GroupUnavailable => "group_unavailable",
+            Self::Rejected => "rejected",
         }
     }
 
@@ -116,7 +120,7 @@ impl MemberState {
             | Self::WouldReattr
             | Self::StaleRecord
             | Self::MountedOwnershipUnknown => Level::Ok,
-            Self::SourceUnavailable | Self::RelocationBlocked => Level::Warn,
+            Self::SourceUnavailable | Self::RelocationBlocked | Self::Rejected => Level::Warn,
             Self::Conflict | Self::TargetUnavailable | Self::Collision | Self::GroupUnavailable => {
                 Level::Error
             }
@@ -131,8 +135,9 @@ pub struct MemberStatus {
     pub group: String,
     /// Member.
     pub name: String,
-    /// Target path.
-    pub target: String,
+    /// Target path (absent for rejected membership entries).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     /// State.
     pub state: MemberState,
     /// Extra detail.
@@ -221,7 +226,36 @@ pub fn member_statuses(
 
     apply_findings(&mut map, &plan.findings, ownership_known);
 
-    map.into_values().collect()
+    let mut statuses: Vec<MemberStatus> = map.into_values().collect();
+    for note in &observed.notes {
+        let (group, name, detail) = match note {
+            Note::Rejected { group, rejection } => (
+                group.to_string(),
+                rejection.display_name.clone(),
+                rejection.reason.to_string(),
+            ),
+            Note::InterpolationFailed {
+                group,
+                name,
+                field,
+                error,
+            } => (
+                group.to_string(),
+                name.to_string(),
+                format!("{field} template: {error}"),
+            ),
+            Note::MembershipDeleted { .. } | Note::MembershipUnreadable { .. } => continue,
+        };
+        statuses.push(MemberStatus {
+            group,
+            name,
+            target: None,
+            state: MemberState::Rejected,
+            detail: Some(detail),
+        });
+    }
+    statuses.sort_by(|a, b| (&a.group, &a.name).cmp(&(&b.group, &b.name)));
+    statuses
 }
 
 fn apply_findings(
@@ -246,7 +280,8 @@ fn apply_findings(
             } => {
                 let target = map
                     .get(key)
-                    .map_or_else(|| source.to_string(), |m| m.target.clone());
+                    .and_then(|m| m.target.clone())
+                    .unwrap_or_else(|| source.to_string());
                 set(
                     map,
                     key,
@@ -304,7 +339,7 @@ fn set(
         MemberStatus {
             group: key.group.to_string(),
             name: key.name.to_string(),
-            target,
+            target: Some(target),
             state,
             detail,
         },
@@ -326,6 +361,8 @@ pub struct GroupReport {
     pub members: usize,
     /// Rejected membership entries.
     pub rejected: usize,
+    /// Hidden membership entries ignored.
+    pub ignored: usize,
     /// Members whose source resolves.
     pub sources_valid: usize,
     /// Members whose source does not resolve.
@@ -425,6 +462,7 @@ pub fn group_reports(
                 propagation,
                 members,
                 rejected,
+                ignored: observed.ignored.get(name).map_or(0, Vec::len),
                 sources_valid,
                 sources_missing,
                 existing_mounts,
@@ -479,11 +517,12 @@ impl DryRunReport {
                 group.name,
                 group.status.as_str()
             );
-            let rows: [(&str, String); 11] = [
+            let rows: [(&str, String); 12] = [
                 ("membership_dir", group.membership_dir.clone()),
                 ("propagation", group.propagation.clone()),
                 ("members", group.members.to_string()),
                 ("rejected", group.rejected.to_string()),
+                ("ignored", group.ignored.to_string()),
                 ("sources_valid", group.sources_valid.to_string()),
                 ("sources_missing", group.sources_missing.to_string()),
                 ("existing_mounts", group.existing_mounts.to_string()),
@@ -514,7 +553,10 @@ pub struct StatusReport {
     /// Notes (for example why the state file could not be read).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
-    /// Every desired or recorded member.
+    /// Number of hidden membership entries ignored, per group.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub ignored: BTreeMap<String, usize>,
+    /// Every desired or recorded member, and rejected membership entries.
     pub members: Vec<MemberStatus>,
 }
 
@@ -546,6 +588,13 @@ impl StatusReport {
         for note in &self.notes {
             let _ = writeln!(out, "note: {note}");
         }
+        for (group, count) in &self.ignored {
+            let _ = writeln!(
+                out,
+                "ignored: group '{group}': {count} hidden entr{}",
+                if *count == 1 { "y" } else { "ies" }
+            );
+        }
         if self.members.is_empty() {
             out.push_str("\nno members\n");
         }
@@ -565,14 +614,10 @@ fn render_members(
     }
     out.push('\n');
     for m in shown {
-        let _ = write!(
-            out,
-            "{}/{}  state={}  target={}",
-            m.group,
-            m.name,
-            m.state.as_str(),
-            crate::logging::quote(&m.target)
-        );
+        let _ = write!(out, "{}/{}  state={}", m.group, m.name, m.state.as_str());
+        if let Some(target) = &m.target {
+            let _ = write!(out, "  target={}", crate::logging::quote(target));
+        }
         if let Some(detail) = &m.detail {
             let _ = write!(out, "  detail={}", crate::logging::quote(detail));
         }
@@ -692,6 +737,7 @@ mod tests {
             observations: obs,
             frozen: BTreeSet::new(),
             members,
+            ignored: BTreeMap::new(),
             notes: vec![],
         };
         (observed, state)
@@ -789,6 +835,7 @@ mod tests {
             state_file: "/var/lib/byssus/state.json".into(),
             ownership_known: false,
             notes: vec!["permission denied; join the byssus group".into()],
+            ignored: BTreeMap::new(),
             members: member_statuses(&observed, &p, &state, false),
         };
         let text = report.to_text();
@@ -799,5 +846,61 @@ mod tests {
         assert!(text.contains("g/a  state=mounted  target=/view/a"));
         assert!(text.contains("g/d  state=source_unavailable  target=/view/d  detail=ENOENT"));
         assert_eq!(report.level(), Level::Warn);
+    }
+
+    #[test]
+    fn rejected_and_ignored_entries_are_reported() {
+        use crate::membership::{EntryKind, RejectReason, Rejection};
+        let (mut observed, state) = scenario();
+        let g = Name::new("g").unwrap();
+        observed.notes.push(Note::Rejected {
+            group: g.clone(),
+            rejection: Rejection {
+                display_name: "link".into(),
+                reason: RejectReason::NotRegularFile(EntryKind::Symlink),
+            },
+        });
+        observed
+            .ignored
+            .insert(g.clone(), vec![".gitkeep".into(), ".tmp-x".into()]);
+        let p = planned(&observed, &state);
+        let members = member_statuses(&observed, &p, &state, true);
+        let link = members.iter().find(|m| m.name == "link").unwrap();
+        assert_eq!(link.state, MemberState::Rejected);
+        assert_eq!(link.target, None);
+        assert_eq!(link.state.level(), Level::Warn);
+
+        let mut ignored = BTreeMap::new();
+        ignored.insert("g".to_owned(), 2);
+        let report = StatusReport {
+            state_file: "/s".into(),
+            ownership_known: true,
+            notes: vec![],
+            ignored,
+            members: members.clone(),
+        };
+        let text = report.to_text();
+        assert!(
+            text.contains("ignored: group 'g': 2 hidden entries"),
+            "{text}"
+        );
+        assert!(
+            text.contains("g/link  state=rejected  detail=\"not a regular file (symbolic link)\""),
+            "{text}"
+        );
+        let json = serde_json::to_value(&report).unwrap();
+        let link_json = json["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["name"] == "link")
+            .unwrap();
+        assert!(link_json.get("target").is_none());
+
+        let mut extra = BTreeMap::new();
+        extra.insert(g.clone(), ("shared".to_owned(), Level::Ok, vec![]));
+        let groups = group_reports(&[(g, "/m".into())], &observed, &p, &members, &extra);
+        assert_eq!(groups[0].rejected, 1);
+        assert_eq!(groups[0].ignored, 2);
     }
 }

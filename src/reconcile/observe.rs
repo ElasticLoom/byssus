@@ -59,6 +59,8 @@ pub struct Observed {
     pub frozen: BTreeSet<Name>,
     /// Valid members per scanned group.
     pub members: BTreeMap<Name, BTreeSet<Name>>,
+    /// Hidden membership entries ignored per scanned group.
+    pub ignored: BTreeMap<Name, Vec<String>>,
     /// Notes to report.
     pub notes: Vec<Note>,
 }
@@ -88,7 +90,7 @@ pub fn observe(
             });
             continue;
         }
-        let membership = match fsops::scan_membership(group.membership_dir.as_fd()) {
+        let mut membership = match fsops::scan_membership(group.membership_dir.as_fd()) {
             Ok(m) => m,
             Err(e) => {
                 out.frozen.insert(group_name.clone());
@@ -99,6 +101,10 @@ pub fn observe(
                 continue;
             }
         };
+        if !membership.ignored.is_empty() {
+            out.ignored
+                .insert(group_name.clone(), std::mem::take(&mut membership.ignored));
+        }
         out.notes.extend(
             membership
                 .rejected

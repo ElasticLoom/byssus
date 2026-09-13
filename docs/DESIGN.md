@@ -301,8 +301,9 @@ configuration. Both must:
 - not begin with `.` (this excludes `.`, `..`, hidden files and editor
   temporary files such as `.name.swp`).
 
-A membership file whose name fails these rules is ignored and logged at
-`warn` as `op=reject`.
+Membership entries whose names begin with `.` are ignored silently (see
+[Membership files](#membership-files)); any other name that fails these rules
+is rejected.
 
 ### Templates
 
@@ -332,8 +333,21 @@ only if:
   rejected);
 - its size is 0.
 
-Each rejected entry is logged at `warn` with `op=reject` and a reason. A
-previously valid membership file that becomes invalid (for example, data is
+**Hidden entries** (names beginning with `.`) are ignored without a warning
+and logged only at `debug` (`op=ignore`). This lets applications create a file
+under a hidden name and `rename(2)` it into place, and keeps tool artifacts
+such as `.gitkeep`, editor swap files and NFS or rsync temporary files from
+producing noise. `byssus status` and `byssus dry-run` show how many hidden
+entries each group has.
+
+Every **other** entry that is not a member is *rejected*: logged at `warn`
+with `op=reject` and a reason, and listed by name with its reason in
+`byssus status` and `byssus dry-run`. The daemon logs a rejection once, when
+it first appears or its reason changes, and logs `op=reject_cleared` when the
+entry is fixed or removed — not on every reconciliation pass. The same applies
+to a membership directory that cannot be read.
+
+A previously valid membership file that becomes invalid (for example, data is
 written into it) removes that member.
 
 ## Mount creation
@@ -765,7 +779,10 @@ byssus version
 
 - **`status`** — for each configured group and each state record: member,
   target, and whether its mount is present and matches (`ok`), missing,
-  conflicting, or has changed source. If the state file cannot be read, it
+  conflicting, or has changed source; plus rejected membership entries with
+  their reasons and the number of ignored hidden entries. Exits 1 only for
+  error states (conflicts, unavailable targets or groups); rejected entries
+  and unavailable sources are warnings. If the state file cannot be read, it
   explains why (for example, "join the `byssus` group") and falls back to a
   view derived from the kernel alone, labeled *ownership unknown*.
 - **`dry-run`** — a full validation pass without mounting: configuration,
@@ -814,7 +831,7 @@ trigger (`startup`, `inotify`, `resync`, `reload`, `cli`) and result.
 
 ```
 ts=2026-09-12T14:30:01Z level=info op=mount group=research name=libcurl source=/srv/example/projects/libcurl/workspace target=/srv/example/groups/research/view/libcurl trigger=inotify result=ok
-ts=2026-09-12T14:30:02Z level=warn op=reject group=research name=.hidden reason="name fails allowlist" trigger=inotify
+ts=2026-09-12T14:30:02Z level=warn op=reject group=research name=bad:name reason="name fails allowlist: name contains disallowed byte 0x3a at offset 3" trigger=inotify
 ts=2026-09-12T14:30:03Z level=warn op=conflict group=research name=mystery target=/srv/example/groups/research/view/mystery reason="mount present at target but not recorded in state; not touching foreign mount"
 ```
 
@@ -965,4 +982,9 @@ Decisions that refined the original design draft, with rationale:
     mass-unmounting.
 11. **Periodic resync** so sources that appear after their membership file,
     and mounts removed out-of-band, converge without an event.
-12. **Names may not begin with `.`**, excluding hidden and temporary files.
+12. **Hidden membership entries are ignored, not rejected.** Names beginning
+    with `.` are skipped with a debug log only, supporting write-then-rename
+    and avoiding noise from tool artifacts.
+13. **Rejections are logged once** (and again only when their reason changes,
+    plus once when cleared) rather than on every pass, and are visible on
+    demand through `status` and `dry-run`.

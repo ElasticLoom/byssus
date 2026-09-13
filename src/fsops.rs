@@ -300,7 +300,8 @@ mod tests {
         assert_eq!(members, ["libcurl", "openssl"]);
         let mut rejected: Vec<_> = m.rejected.iter().map(|r| r.display_name.as_str()).collect();
         rejected.sort_unstable();
-        assert_eq!(rejected, [".hidden", "fifo", "link", "nonempty", "subdir"]);
+        assert_eq!(rejected, ["fifo", "link", "nonempty", "subdir"]);
+        assert_eq!(m.ignored, [".hidden"]);
 
         // Rescanning through the same descriptor sees changes.
         fs::remove_file(p.join("openssl")).unwrap();
