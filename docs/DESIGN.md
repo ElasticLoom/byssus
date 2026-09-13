@@ -524,7 +524,10 @@ Additional rules:
     during startup is missed.
 12. Full reconcile of every group, including cleanup of state records belonging
     to groups no longer configured.
-13. Enter the event loop.
+13. Notify the service manager that the daemon is ready (`READY=1` over
+    `NOTIFY_SOCKET` when started with `Type=notify`), so units ordered after
+    `byssusd` start only once views are populated.
+14. Enter the event loop.
 
 ### Event loop
 
@@ -547,8 +550,11 @@ Additional rules:
   mass-unmount a group; groups are removed through configuration.
 - **Resync timeout:** full reconcile of every non-degraded group. The timer
   restarts after every pass.
-- **`SIGHUP`:** transactional reload.
-- **`SIGTERM` / `SIGINT`:** write the state file and exit 0. Mounts are **not**
+- **`SIGHUP`:** transactional reload, bracketed by `RELOADING=1` and
+  `READY=1` notifications; the reload's reconcile pass runs before `READY=1`.
+  The systemd status line (`STATUS=`) reports group and mount counts,
+  degraded groups and the most recent rejected reload.
+- **`SIGTERM` / `SIGINT`:** notify `STOPPING=1`, write the state file and exit 0. Mounts are **not**
   removed.
 
 ### Reload (`SIGHUP`)

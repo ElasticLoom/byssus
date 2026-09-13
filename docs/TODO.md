@@ -97,7 +97,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Clean shutdown on `SIGTERM`/`SIGINT` (state write, no unmount)
 - [x] Integration tests: live membership changes, propagation into simulated container, reload scenarios, restart no-op, rapid churn
 
-- [ ] systemd readiness notification (`Type=notify`, `sd_notify` READY/RELOADING/STOPPING) so dependent units start after the initial reconcile
+- [x] systemd readiness notification (`Type=notify`, `sd_notify` READY/RELOADING/STOPPING, `STATUS=` with counts and rejected reloads) so dependent units start after the initial reconcile
 - [ ] Automatic recovery of degraded groups when the membership directory reappears (currently requires SIGHUP)
 
 ## M5 — Deployment artifacts and documentation
@@ -133,7 +133,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [ ] Hosted apt/yum repositories (signing keys and hosting), if users ask for them
 - [ ] Test the `aarch64` packages by installing them (currently built but only the `x86_64` packages are installed in tests)
 
-- [ ] Daemon-written status snapshot `/run/byssus/status.json` (only if a use case appears; would also let integrations confirm that the latest reload was accepted without reading logs)
+- [ ] Daemon-written status snapshot `/run/byssus/status.json` (only if a use case appears; the systemd status line now reports rejected reloads)
 - [ ] JSON log format
 - [ ] Selective exposure of source subdirectories
 - [ ] Daemon-applied seccomp filter

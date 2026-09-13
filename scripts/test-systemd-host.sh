@@ -73,9 +73,14 @@ byssus check || fail "byssus check"
 byssus dry-run || fail "byssus dry-run"
 
 step "start the service"
+# Membership exists before start: with Type=notify, systemctl start returns
+# only after the startup reconcile, so the mount must already be visible.
+touch "$root/membership/demo/alpha"
 systemctl enable --now byssusd
-wait_for "startup reconcile logged" sh -c "journalctl -u byssusd --no-pager | grep -q 'trigger=startup'"
-systemctl is-active --quiet byssusd || fail "service not active after startup"
+systemctl is-active --quiet byssusd || fail "service not active after start"
+test -f "$root/consumer/alpha/README" || fail "member not mounted when start returned (readiness sent too early?)"
+status_text="$(systemctl show -p StatusText --value byssusd)"
+[[ "$status_text" == "1 group(s), 1 mount(s)" ]] || fail "unexpected StatusText: $status_text"
 pid="$(systemctl show -p MainPID --value byssusd)"
 [[ "$pid" != 0 ]] || fail "no main process"
 grep -Eq "^Uid:\s+$uid\s+$uid\s+$uid\s+$uid$" "/proc/$pid/status" || fail "not running as byssus"
@@ -84,9 +89,7 @@ grep -Eq '^NoNewPrivs:\s+1$' "/proc/$pid/status" || fail "no_new_privs not set"
 [[ "$(readlink "/proc/$pid/ns/mnt")" == "$(readlink /proc/1/ns/mnt)" ]] || fail "daemon is not in the host mount namespace"
 journalctl -u byssusd --no-pager | grep -q 'msg="privileges normalized"' || fail "no privileges log"
 
-step "live membership reaches the consumer"
-touch "$root/membership/demo/alpha"
-wait_for "alpha visible in consumer" test -f "$root/consumer/alpha/README"
+step "the member is served to the consumer"
 [[ "$(cat "$root/consumer/alpha/README")" == "I am alpha" ]] || fail "wrong content"
 if (echo x > "$root/consumer/alpha/new") 2>/dev/null; then fail "consumer could write"; fi
 [[ "$(stat -c %a /var/lib/byssus)" == 750 ]] || fail "state directory mode"
@@ -98,6 +101,16 @@ touch "$root/membership/demo/beta"
 wait_for "beta visible" test -f "$root/consumer/beta/README"
 systemctl reload byssusd
 wait_for "reload logged" sh -c "journalctl -u byssusd --no-pager | grep -q 'configuration reloaded'"
+wait_for "status shows two mounts" sh -c "systemctl show -p StatusText --value byssusd | grep -q '1 group(s), 2 mount(s)'"
+
+step "a rejected reload is visible in the status"
+echo '[groups.broken' > /etc/byssus/conf.d/zz-broken.toml
+systemctl reload byssusd
+wait_for "failed reload in status" sh -c "systemctl show -p StatusText --value byssusd | grep -q 'last reload failed'"
+systemctl is-active --quiet byssusd || fail "daemon stopped after a rejected reload"
+rm /etc/byssus/conf.d/zz-broken.toml
+systemctl reload byssusd
+wait_for "status recovered" sh -c "! systemctl show -p StatusText --value byssusd | grep -q 'last reload failed'"
 
 step "leaving removes the mount"
 rm "$root/membership/demo/beta"

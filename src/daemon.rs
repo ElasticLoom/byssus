@@ -12,6 +12,7 @@ use rustix::event::{Timespec, epoll};
 use crate::app::{self, ConfigSource};
 use crate::config::{Config, OwnershipPolicy};
 use crate::name::Name;
+use crate::notify::Notifier;
 use crate::privileges::plan::Goal;
 use crate::reconcile::{self, Trigger};
 use crate::runtime::Runtime;
@@ -57,10 +58,18 @@ struct Daemon {
     pending: Option<(Instant, Instant)>,
     /// Observation notes already logged.
     notes: reconcile::NoteLog,
+    /// systemd notifications.
+    notifier: Notifier,
+    /// Why the most recent reload was rejected, until one succeeds.
+    last_reload_error: Option<String>,
 }
 
 /// Runs the daemon until `SIGTERM` or `SIGINT`.
 pub fn run(options: Options) -> anyhow::Result<()> {
+    let notifier = Notifier::from_env().unwrap_or_else(|e| {
+        tracing::warn!(msg = "ignoring invalid NOTIFY_SOCKET", error = %e);
+        Notifier::disabled()
+    });
     let loaded = app::load_config(&options.config, OwnershipPolicy::Enforce)?;
     let config = loaded.config;
     app::set_umask();
@@ -105,6 +114,8 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         next_resync: None,
         pending: None,
         notes: reconcile::NoteLog::default(),
+        notifier,
+        last_reload_error: None,
     };
     tracing::info!(
         msg = "byssusd started",
@@ -113,7 +124,11 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         records = daemon.state.len(),
     );
     daemon.pass(Trigger::Startup);
+    // Ready only once the startup reconcile has populated the views, so units
+    // ordered after byssusd (such as container runtimes) see every member.
+    daemon.notifier.ready(&daemon.status_text());
     let result = daemon.event_loop(&signals);
+    daemon.notifier.stopping();
 
     if let Err(e) = daemon.store.save(&daemon.state) {
         tracing::error!(msg = "cannot write state file on shutdown", error = %e);
@@ -158,6 +173,27 @@ impl Daemon {
             .daemon
             .resync_interval
             .map(|interval| Instant::now() + interval);
+        self.notifier.status(&self.status_text());
+    }
+
+    fn status_text(&self) -> String {
+        use std::fmt::Write as _;
+        let mut text = format!(
+            "{} group(s), {} mount(s)",
+            self.config.groups.len(),
+            self.state.len()
+        );
+        if !self.degraded.is_empty() {
+            let names: Vec<String> = self.degraded.iter().map(ToString::to_string).collect();
+            let _ = write!(text, "; degraded: {}", names.join(", "));
+        }
+        if let Some(error) = &self.last_reload_error {
+            let _ = write!(
+                text,
+                "; last reload failed, running previous configuration: {error}"
+            );
+        }
+        text
     }
 
     fn event_loop(&mut self, signals: &SignalFd) -> anyhow::Result<()> {
@@ -188,9 +224,12 @@ impl Daemon {
                         while let Some(signal) = signals.read().context("reading signalfd")? {
                             match i32::try_from(signal).unwrap_or(-1) {
                                 libc::SIGHUP => {
+                                    self.notifier.reloading();
                                     if self.reload() {
-                                        run_pass = Some(Trigger::Reload);
+                                        self.pending = None;
+                                        self.pass(Trigger::Reload);
                                     }
+                                    self.notifier.ready(&self.status_text());
                                 }
                                 libc::SIGTERM | libc::SIGINT => {
                                     tracing::info!(msg = "shutdown requested", signal = signal);
@@ -249,12 +288,14 @@ impl Daemon {
             Ok((config, runtime, watcher)) => {
                 if let Err(e) = self.swap_watcher(&watcher) {
                     tracing::error!(msg = "reload failed; keeping previous configuration", error = %format!("{e:#}"));
+                    self.last_reload_error = Some(first_line(&format!("{e:#}")));
                     return false;
                 }
                 self.config = config;
                 self.runtime = runtime;
                 self.watcher = watcher;
                 self.degraded.clear();
+                self.last_reload_error = None;
                 tracing::info!(
                     msg = "configuration reloaded",
                     groups = self.config.groups.len()
@@ -263,6 +304,7 @@ impl Daemon {
             }
             Err(e) => {
                 tracing::error!(msg = "reload failed; keeping previous configuration", error = %format!("{e:#}"));
+                self.last_reload_error = Some(first_line(&format!("{e:#}")));
                 false
             }
         }
@@ -300,6 +342,10 @@ impl Daemon {
             .context("removing old inotify instance")?;
         Ok(())
     }
+}
+
+fn first_line(s: &str) -> String {
+    s.lines().next().unwrap_or_default().to_owned()
 }
 
 fn duration_to_timespec(d: Duration) -> Timespec {

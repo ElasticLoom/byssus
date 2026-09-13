@@ -215,7 +215,11 @@ membership directories — **before** installing its fragment; a fragment that
 refers to missing directories fails the check.
 
 A reload's outcome is reported in the daemon's log (`msg="configuration
-reloaded"` or `msg="reload failed; keeping previous configuration"`). A
+reloaded"` or `msg="reload failed; keeping previous configuration"`) and in
+its systemd status line: after a rejected reload,
+`systemctl show -p StatusText --value byssusd` includes
+`last reload failed, running previous configuration: <reason>` until a later
+reload succeeds. A
 successful `byssus check` immediately beforehand makes failure unlikely, but
 it is not atomic with the reload: something changing in between (for example
 a directory being removed) can still make the reload fail.

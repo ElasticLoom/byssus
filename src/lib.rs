@@ -24,6 +24,7 @@ pub mod membership;
 pub mod mount;
 pub mod mountinfo;
 pub mod name;
+pub mod notify;
 pub mod privileges;
 pub mod probe;
 pub mod reconcile;

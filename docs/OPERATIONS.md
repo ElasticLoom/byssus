@@ -225,7 +225,11 @@ The shipped unit:
 - creates `/var/lib/byssus` (`StateDirectory=`, mode `0750`);
 - applies a system call filter, address-family, namespace, realtime,
   personality and W^X restrictions, and private network and IPC namespaces;
-- starts before Docker, containerd and Podman so containers see every member.
+- uses `Type=notify`: `byssusd` reports ready only after its startup
+  reconcile, and the unit starts before Docker, containerd and Podman, so
+  containers see every member from the start;
+- reports group and mount counts, degraded groups and rejected reloads in
+  `systemctl status byssusd` (or `systemctl show -p StatusText byssusd`).
 
 **Do not add options that create a mount namespace** — `ProtectSystem=`,
 `PrivateTmp=`, `ReadWritePaths=` and many others (the full list is at the top
@@ -284,7 +288,8 @@ journalctl -u byssusd | grep -E 'op=(conflict|reject|degrade)|result=failed'
 ```
 
 **Reloads are transactional.** An invalid configuration is logged and ignored;
-the daemon keeps running on the previous one. Changing `daemon.state_dir`
+the daemon keeps running on the previous one, and its status line says so
+until a reload succeeds. Changing `daemon.state_dir`
 requires a restart; so does changing `daemon.user`.
 
 **Restarts and upgrades** do not disturb consumers: `byssusd` never unmounts on

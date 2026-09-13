@@ -30,6 +30,10 @@ struct Daemon {
 
 impl Daemon {
     fn start(d: &Deployment, extra: &[&str]) -> Self {
+        Self::start_with_env(d, extra, &[])
+    }
+
+    fn start_with_env(d: &Deployment, extra: &[&str], env: &[(&str, &std::path::Path)]) -> Self {
         let log = d.path(&format!(
             "daemon-{}.log",
             Instant::now().elapsed().as_nanos()
@@ -40,6 +44,7 @@ impl Daemon {
             .args(d.config_args())
             .args(["--allow-root", "--log-level", "debug"])
             .args(extra)
+            .envs(env.iter().map(|(k, v)| (*k, *v)))
             .stdout(Stdio::null())
             .stderr(file)
             .spawn()
@@ -81,8 +86,12 @@ impl Daemon {
         rustix::process::kill_process(pid, signal).unwrap();
     }
 
-    fn stop(mut self) -> i32 {
+    fn stop(self) -> i32 {
         self.signal(Signal::TERM);
+        self.stop_after_signal()
+    }
+
+    fn stop_after_signal(mut self) -> i32 {
         let mut child = self.child.take().unwrap();
         let start = Instant::now();
         loop {
@@ -527,4 +536,82 @@ fn read_write_group_through_container_view() {
     assert_eq!(daemon.stop(), 0);
     let record = d.state();
     assert!(!record.records().next().unwrap().read_only);
+}
+
+/// Receives notify messages until one satisfies `pred`, returning it.
+fn next_notify(
+    socket: &std::os::unix::net::UnixDatagram,
+    what: &str,
+    pred: impl Fn(&str) -> bool,
+) -> String {
+    let start = Instant::now();
+    let mut buf = [0u8; 4096];
+    while start.elapsed() < TIMEOUT {
+        match socket.recv(&mut buf) {
+            Ok(n) => {
+                let msg = String::from_utf8_lossy(&buf[..n]).into_owned();
+                if pred(&msg) {
+                    return msg;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("recv: {e}"),
+        }
+    }
+    panic!("timed out waiting for notify message: {what}");
+}
+
+#[test]
+#[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
+fn notifies_systemd_ready_only_after_startup_reconcile() {
+    let d = Deployment::new();
+    d.add_source("a");
+    d.join("a");
+    let socket_path = d.path("notify.sock");
+    let socket = std::os::unix::net::UnixDatagram::bind(&socket_path).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+
+    let daemon = Daemon::start_with_env(&d, &[], &[("NOTIFY_SOCKET", &socket_path)]);
+    let ready = next_notify(&socket, "READY", |m| m.contains("READY=1"));
+    // The member is mounted by the time readiness is reported.
+    assert!(d.visible("a"), "READY sent before the startup reconcile");
+    assert!(ready.contains("STATUS=1 group(s), 1 mount(s)"), "{ready}");
+
+    // Reload: RELOADING, then READY after the reload's reconcile.
+    daemon.signal(Signal::HUP);
+    let reloading = next_notify(&socket, "RELOADING", |m| m.contains("RELOADING=1"));
+    assert!(reloading.contains("MONOTONIC_USEC="), "{reloading}");
+    next_notify(&socket, "READY after reload", |m| m.contains("READY=1"));
+
+    // A rejected reload is visible in the status line.
+    let bad = d.path("etc/conf.d/zz-bad.toml");
+    fs::write(&bad, "[groups.bad\n").unwrap();
+    fs::set_permissions(&bad, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
+    daemon.signal(Signal::HUP);
+    let after_failure = next_notify(&socket, "READY after failed reload", |m| {
+        m.contains("READY=1")
+    });
+    assert!(
+        after_failure.contains("last reload failed, running previous configuration"),
+        "{after_failure}"
+    );
+    fs::remove_file(&bad).unwrap();
+    daemon.signal(Signal::HUP);
+    let recovered = next_notify(&socket, "READY after fixed reload", |m| {
+        m.contains("READY=1")
+    });
+    assert!(!recovered.contains("last reload failed"), "{recovered}");
+
+    // Membership changes update the status line.
+    d.add_source("b");
+    d.join("b");
+    next_notify(&socket, "status with two mounts", |m| {
+        m.contains("STATUS=1 group(s), 2 mount(s)")
+    });
+
+    daemon.signal(Signal::TERM);
+    next_notify(&socket, "STOPPING", |m| m.contains("STOPPING=1"));
+    assert_eq!(daemon.stop_after_signal(), 0);
 }

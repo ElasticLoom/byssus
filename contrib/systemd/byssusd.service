@@ -25,7 +25,11 @@ After=local-fs.target
 Before=docker.service containerd.service podman.service
 
 [Service]
-Type=simple
+# byssusd reports readiness only after its startup reconcile, so units ordered
+# after it see every member. Reloads report RELOADING/READY, and
+# `systemctl status byssusd` shows group and mount counts and failed reloads.
+Type=notify
+NotifyAccess=main
 ExecStart=/usr/local/bin/byssusd
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
