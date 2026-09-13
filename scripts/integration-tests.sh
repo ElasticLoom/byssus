@@ -25,21 +25,39 @@ MSG
     exit 1
 fi
 
-# Build test and daemon binaries as the invoking user.
-cargo build --bins --quiet
+# Build test and daemon binaries as the invoking user. Locate them from
+# cargo's output, which honors CARGO_TARGET_DIR and other build settings.
+executables() {
+    grep -o '"executable":"[^"]*"' | cut -d'"' -f4
+}
 binary="$(
     cargo test --test privileged --no-run --message-format=json 2>/dev/null |
-        grep -o '"executable":"[^"]*privileged-[^"]*"' |
-        tail -n 1 |
-        cut -d'"' -f4
+        executables | grep '/privileged-[^/]*$' | tail -n 1
 )"
 if [[ -z "$binary" || ! -x "$binary" ]]; then
     echo "error: could not locate the privileged test binary" >&2
     exit 1
 fi
+mapfile -t bins < <(cargo build --bins --message-format=json 2>/dev/null | executables)
+if [[ ${#bins[@]} -ne 2 ]]; then
+    echo "error: expected the byssus and byssusd binaries, found: ${bins[*]:-none}" >&2
+    exit 1
+fi
+
+# Stage the binaries the tests execute in a directory every user in the
+# namespace can reach, as an installed package would be. Tests run them as
+# unprivileged users too, and the build directory may not be traversable by
+# other users (for example beneath a CI runner's home directory).
+bin_dir="$(mktemp -d)"
+trap 'rm -rf "$bin_dir"' EXIT
+chmod 0755 "$bin_dir"
+install -m 0755 "${bins[@]}" "$bin_dir/"
+for name in byssus byssusd; do
+    [[ -x "$bin_dir/$name" ]] || { echo "error: $name was not built" >&2; exit 1; }
+done
 
 export BYSSUS_TEST_NAMESPACE=1
-export BYSSUS_TEST_BIN_DIR="$PWD/target/debug"
+export BYSSUS_TEST_BIN_DIR="$bin_dir"
 
 # Map a range of subordinate IDs as well as root when possible, so tests can
 # switch to an unprivileged service user inside the namespace. This needs
@@ -58,5 +76,6 @@ else
     skip_args=(--skip service_user::)
 fi
 
-exec unshare --user "${map_args[@]}" --mount --propagation private -- \
+# Not exec: the trap removes the staged binaries afterwards.
+unshare --user "${map_args[@]}" --mount --propagation private -- \
     "$binary" --ignored --test-threads=1 "${skip_args[@]}" "$@"
