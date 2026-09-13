@@ -200,6 +200,10 @@ same property again at resolution time.
 
 ## CLI
 
+The packages install manual pages for each command (`man byssusd`,
+`man byssus`, `man byssus-check`, …); they are generated from the same
+definitions as `--help`.
+
 ### `byssusd`
 
 ```

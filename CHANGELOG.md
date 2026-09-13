@@ -22,6 +22,8 @@ and this project adheres to
 - `byssus status` run as root looks as the service user, reporting groups
   whose directories that user cannot read as `group_unavailable`; the systemd
   status line names unreadable groups.
+- Manual pages for `byssusd` and each `byssus` command, generated from the
+  command-line definitions and installed by the packages.
 - `byssus` CLI: `status`, `dry-run`, `check`, `reconcile` and `version`, with
   text and JSON output. `check` validates candidate drop-in fragments exactly
   as a reload would, before they are installed.

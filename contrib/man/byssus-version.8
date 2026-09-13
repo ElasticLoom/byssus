@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH byssus-version 8  "byssus 0.1.0" "Byssus Manual"
+.SH NAME
+byssus\-version \- Print the version
+.SH SYNOPSIS
+\fBbyssus version\fR [\fB\-\-config\fR] [\fB\-\-config\-dir\fR] [\fB\-\-log\-level\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Print the version
+.SH OPTIONS
+.TP
+\fB\-\-config\fR \fI<FILE>\fR
+Main configuration file [default: /etc/byssus/byssus.toml]
+.TP
+\fB\-\-config\-dir\fR \fI<DIR>\fR
+Drop\-in configuration directory [default: /etc/byssus/conf.d]
+.TP
+\fB\-\-log\-level\fR \fI<LEVEL>\fR
+Log level for diagnostics on stderr: error, warn, info, debug, trace
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

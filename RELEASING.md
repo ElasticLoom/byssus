@@ -7,6 +7,8 @@ Releases are cut from `main` by a maintainer.
    - Run the privileged integration tests locally:
      `scripts/integration-tests.sh`.
    - Update `version` in `Cargo.toml` (and `Cargo.lock` via `cargo check`).
+   - Regenerate the man pages, which show the version:
+     `BYSSUS_UPDATE_MAN=1 cargo test --lib cli::`.
    - Move the *Unreleased* entries in `CHANGELOG.md` under a new version
      heading with today's date.
    - Open a pull request with these changes and merge it.

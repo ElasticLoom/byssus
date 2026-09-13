@@ -29,6 +29,17 @@ rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
+### Command-line options and man pages
+
+The options of `byssusd` and `byssus` are defined in `src/cli.rs`. The manual
+pages in `contrib/man/` are generated from those definitions, and a unit test
+fails if they are out of date. After changing options, help text or the
+version, regenerate them:
+
+```bash
+BYSSUS_UPDATE_MAN=1 cargo test --lib cli::
+```
+
 ### Integration tests
 
 Integration tests exercise real mount syscalls. They are not run by plain

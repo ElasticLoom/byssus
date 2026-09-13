@@ -1,0 +1,46 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH byssus-check 8  "byssus 0.1.0" "Byssus Manual"
+.SH NAME
+byssus\-check \- Check whether the configuration would be accepted by a reload, optionally with drop\-in fragments added, replaced or removed, without installing anything or signaling the daemon
+.SH SYNOPSIS
+\fBbyssus check\fR [\fB\-\-add\fR] [\fB\-\-config\fR] [\fB\-\-config\-dir\fR] [\fB\-\-remove\fR] [\fB\-\-allow\-slave\-namespace\fR] [\fB\-\-log\-level\fR] [\fB\-\-format\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Check whether the configuration would be accepted by a reload, optionally with drop\-in fragments added, replaced or removed, without installing anything or signaling the daemon.
+.PP
+Runs the same validation as a SIGHUP reload: parsing, ownership and modes, cross\-group rules, paths, opening every root and membership directory, watches and propagation. When run as root with a service user configured, access is checked as that user. Exits 0 if the configuration would be accepted, 1 otherwise.
+.SH OPTIONS
+.TP
+\fB\-\-add\fR \fI<FILE>\fR
+Candidate drop\-in fragment, treated as installed in the drop\-in directory under its file name (replacing a fragment of that name). May be repeated
+.TP
+\fB\-\-config\fR \fI<FILE>\fR
+Main configuration file [default: /etc/byssus/byssus.toml]
+.TP
+\fB\-\-config\-dir\fR \fI<DIR>\fR
+Drop\-in configuration directory [default: /etc/byssus/conf.d]
+.TP
+\fB\-\-remove\fR \fI<NAME>\fR
+File name of an installed drop\-in fragment to leave out. May be repeated
+.TP
+\fB\-\-allow\-slave\-namespace\fR
+Treat target roots on slave mounts as acceptable (as byssusd \-\-allow\-slave\-namespace would)
+.TP
+\fB\-\-log\-level\fR \fI<LEVEL>\fR
+Log level for diagnostics on stderr: error, warn, info, debug, trace
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: text]
+Output format
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+text
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)

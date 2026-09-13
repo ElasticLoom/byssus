@@ -1,0 +1,46 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH byssusd 8  "byssus 0.1.0" "Byssus Manual"
+.SH NAME
+byssusd \- Byssus daemon: reconciles bind mounts from membership directories
+.SH SYNOPSIS
+\fBbyssusd\fR [\fB\-\-config\fR] [\fB\-\-config\-dir\fR] [\fB\-\-log\-level\fR] [\fB\-\-user\fR] [\fB\-\-allow\-root\fR] [\fB\-\-allow\-slave\-namespace\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] 
+.SH DESCRIPTION
+Byssus daemon: reconciles bind mounts from membership directories.
+.PP
+byssusd watches the membership directories of every configured group and group set, and creates and removes bind mounts (read\-only by default) beneath each target root, so consumers attached to a view see members appear and disappear. It keeps only CAP_SYS_ADMIN, and switches to the service user (daemon.user) when started as root.
+.PP
+Signals: SIGHUP reloads the configuration, keeping the previous one if the new configuration is invalid. SIGTERM or SIGINT stops the daemon; mounts are preserved.
+.PP
+Files (defaults): /etc/byssus/byssus.toml and /etc/byssus/conf.d/*.toml (configuration); /var/lib/byssus/state.json (state).
+.PP
+Exit status: 0 after a clean shutdown, 1 if startup fails.
+.PP
+See also byssus(8), and REFERENCE.md and OPERATIONS.md in /usr/share/doc/byssus.
+.SH OPTIONS
+.TP
+\fB\-\-config\fR \fI<FILE>\fR
+Main configuration file [default: /etc/byssus/byssus.toml]
+.TP
+\fB\-\-config\-dir\fR \fI<DIR>\fR
+Drop\-in configuration directory [default: /etc/byssus/conf.d]
+.TP
+\fB\-\-log\-level\fR \fI<LEVEL>\fR [default: info]
+Log level: error, warn, info, debug, trace
+.TP
+\fB\-\-user\fR \fI<USER>\fR
+Service user to switch to when started as root (overrides daemon.user)
+.TP
+\fB\-\-allow\-root\fR
+Permit running as UID 0 without a service user (development and tests)
+.TP
+\fB\-\-allow\-slave\-namespace\fR
+Permit target roots on slave mounts (normally a sign that the daemon runs in a non\-host mount namespace)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH VERSION
+v0.1.0

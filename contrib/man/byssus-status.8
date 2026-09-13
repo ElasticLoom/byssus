@@ -1,0 +1,37 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH byssus-status 8  "byssus 0.1.0" "Byssus Manual"
+.SH NAME
+byssus\-status \- Show every desired or recorded member and its mount state
+.SH SYNOPSIS
+\fBbyssus status\fR [\fB\-\-config\fR] [\fB\-\-format\fR] [\fB\-\-config\-dir\fR] [\fB\-\-log\-level\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Show every desired or recorded member and its mount state.
+.PP
+Exits 1 if any member is in an error state.
+.SH OPTIONS
+.TP
+\fB\-\-config\fR \fI<FILE>\fR
+Main configuration file [default: /etc/byssus/byssus.toml]
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: text]
+Output format
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+text
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-\-config\-dir\fR \fI<DIR>\fR
+Drop\-in configuration directory [default: /etc/byssus/conf.d]
+.TP
+\fB\-\-log\-level\fR \fI<LEVEL>\fR
+Log level for diagnostics on stderr: error, warn, info, debug, trace
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)

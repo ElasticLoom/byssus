@@ -1,0 +1,31 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH byssus-reconcile 8  "byssus 0.1.0" "Byssus Manual"
+.SH NAME
+byssus\-reconcile \- Perform one reconciliation pass and exit. Requires CAP_SYS_ADMIN and refuses to run while byssusd holds the state lock
+.SH SYNOPSIS
+\fBbyssus reconcile\fR [\fB\-\-config\fR] [\fB\-\-user\fR] [\fB\-\-allow\-root\fR] [\fB\-\-config\-dir\fR] [\fB\-\-allow\-slave\-namespace\fR] [\fB\-\-log\-level\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Perform one reconciliation pass and exit. Requires CAP_SYS_ADMIN and refuses to run while byssusd holds the state lock
+.SH OPTIONS
+.TP
+\fB\-\-config\fR \fI<FILE>\fR
+Main configuration file [default: /etc/byssus/byssus.toml]
+.TP
+\fB\-\-user\fR \fI<USER>\fR
+Service user to switch to when started as root (overrides daemon.user)
+.TP
+\fB\-\-allow\-root\fR
+Permit running as UID 0 without a service user (development and tests)
+.TP
+\fB\-\-config\-dir\fR \fI<DIR>\fR
+Drop\-in configuration directory [default: /etc/byssus/conf.d]
+.TP
+\fB\-\-allow\-slave\-namespace\fR
+Permit target roots on slave mounts
+.TP
+\fB\-\-log\-level\fR \fI<LEVEL>\fR
+Log level for diagnostics on stderr: error, warn, info, debug, trace
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

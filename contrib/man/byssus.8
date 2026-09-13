@@ -1,0 +1,47 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH byssus 8  "byssus 0.1.0" "Byssus Manual"
+.SH NAME
+byssus \- Byssus command\-line tool: inspect, validate and reconcile mounts
+.SH SYNOPSIS
+\fBbyssus\fR [\fB\-\-config\fR] [\fB\-\-config\-dir\fR] [\fB\-\-log\-level\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Byssus command\-line tool: inspect, validate and reconcile mounts.
+.PP
+status, dry\-run and check never mount anything; run as root with daemon.user configured, they look as that user, as the daemon would. reconcile performs one reconciliation pass and needs CAP_SYS_ADMIN.
+.PP
+See also byssusd(8), and REFERENCE.md and OPERATIONS.md in /usr/share/doc/byssus.
+.SH OPTIONS
+.TP
+\fB\-\-config\fR \fI<FILE>\fR
+Main configuration file [default: /etc/byssus/byssus.toml]
+.TP
+\fB\-\-config\-dir\fR \fI<DIR>\fR
+Drop\-in configuration directory [default: /etc/byssus/conf.d]
+.TP
+\fB\-\-log\-level\fR \fI<LEVEL>\fR
+Log level for diagnostics on stderr: error, warn, info, debug, trace
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+byssus\-status(8)
+Show every desired or recorded member and its mount state
+.TP
+byssus\-dry\-run(8)
+Validate configuration, kernel, permissions and propagation, and show what a reconcile would do, without mounting anything
+.TP
+byssus\-reconcile(8)
+Perform one reconciliation pass and exit. Requires CAP_SYS_ADMIN and refuses to run while byssusd holds the state lock
+.TP
+byssus\-check(8)
+Check whether the configuration would be accepted by a reload, optionally with drop\-in fragments added, replaced or removed, without installing anything or signaling the daemon
+.TP
+byssus\-version(8)
+Print the version
+.SH VERSION
+v0.1.0

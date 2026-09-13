@@ -44,6 +44,9 @@ echo "==> Debian/Ubuntu (.deb)"
     $verify_installed
     # Container images may exclude /usr/share/doc on disk; check the package.
     dpkg -L byssus | grep -q /usr/share/doc/byssus/OPERATIONS.md
+    for page in byssusd byssus byssus-check byssus-dry-run byssus-reconcile byssus-status byssus-version; do
+        dpkg -L byssus | grep -qx /usr/share/man/man8/\$page.8.gz || { echo \"FAIL: man page \$page missing\" >&2; exit 1; }
+    done
     # Upgrade path: reinstalling runs postinst with a previous version.
     echo '# local edit' >> /etc/byssus/byssus.toml
     dpkg -i --force-confold /dist/$(basename "$deb")
@@ -61,6 +64,10 @@ echo "==> Fedora (.rpm)"
     rpm -i /dist/$(basename "$rpm")
     $verify_installed
     rpm -ql byssus | grep -q /usr/share/doc/byssus/OPERATIONS.md
+    for page in byssusd byssus byssus-check byssus-dry-run byssus-reconcile byssus-status byssus-version; do
+        rpm -ql byssus | grep -qx /usr/share/man/man8/\$page.8.gz || { echo \"FAIL: man page \$page missing\" >&2; exit 1; }
+    done
+    zcat /usr/share/man/man8/byssusd.8.gz | grep -q '^.TH byssusd 8' || { echo 'FAIL: byssusd.8 content' >&2; exit 1; }
     rpm -qc byssus | grep -q /etc/byssus/byssus.toml
     echo '# local edit' >> /etc/byssus/byssus.toml
     rpm -U --replacepkgs /dist/$(basename "$rpm")

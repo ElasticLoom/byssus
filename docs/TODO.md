@@ -125,7 +125,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] `docs/OPERATIONS.md`: install, users, ACL recipe, propagation check, container configuration (`rslave`), upgrades, troubleshooting
 - [x] Example configuration in `examples/` (validated by a unit test)
 - [x] `--help` completeness review
-- [ ] Man pages (e.g. generated from the clap definitions)
+- [x] Man pages generated from the clap definitions (`contrib/man/`, kept in sync by a unit test; installed by the `.deb` and `.rpm`)
 
 - [x] `.deb` and `.rpm` packages (`scripts/package.sh`), with container install/upgrade/remove tests (`scripts/test-packages.sh`)
 

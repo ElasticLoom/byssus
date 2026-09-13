@@ -53,6 +53,7 @@ assets = [
     ["target/package/byssusd.service", "usr/lib/systemd/system/byssusd.service", "644"],
     ["contrib/sysusers.d/byssus.conf", "usr/lib/sysusers.d/byssus.conf", "644"],
     ["packaging/byssus.toml", "etc/byssus/byssus.toml", "644"],
+    ["target/package/man/*.8.gz", "usr/share/man/man8/", "644"],
     ["README.md", "usr/share/doc/byssus/README.md", "644"],
     ["CHANGELOG.md", "usr/share/doc/byssus/CHANGELOG.md", "644"],
     ["docs/OPERATIONS.md", "usr/share/doc/byssus/OPERATIONS.md", "644"],
@@ -80,6 +81,7 @@ assets = [
     { source = "target/package/byssusd.service", dest = "/usr/lib/systemd/system/byssusd.service", mode = "644" },
     { source = "contrib/sysusers.d/byssus.conf", dest = "/usr/lib/sysusers.d/byssus.conf", mode = "644" },
     { source = "packaging/byssus.toml", dest = "/etc/byssus/byssus.toml", mode = "644", config = "noreplace" },
+    { source = "target/package/man/*.8.gz", dest = "/usr/share/man/man8/", mode = "644", doc = true },
     { source = "LICENSE", dest = "/usr/share/licenses/byssus/LICENSE", mode = "644", doc = true },
     { source = "README.md", dest = "/usr/share/doc/byssus/README.md", mode = "644", doc = true },
     { source = "CHANGELOG.md", dest = "/usr/share/doc/byssus/CHANGELOG.md", mode = "644", doc = true },
@@ -116,6 +118,7 @@ tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "fmt", "registry"] }
 
 [dev-dependencies]
+clap_mangen = "0.3.3"
 tempfile = "3.27.0"
 
 [lints.rust]

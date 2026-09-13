@@ -1,14 +1,13 @@
 //! `byssus` — the Byssus command-line tool.
 
-// Doc comments double as `--help` text, where Markdown backticks would show.
-#![allow(clippy::print_stdout, clippy::print_stderr, clippy::doc_markdown)]
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context as _;
 use byssus::app::{self, ConfigSource};
+use byssus::cli::byssus::{Cli, Command, Format, PrivilegeArgs};
 use byssus::config::{self, Config, OwnershipPolicy, Severity};
 use byssus::logging::{self, LogLevel};
 use byssus::mountinfo::MountTable;
@@ -19,124 +18,8 @@ use byssus::reconcile::{self, Trigger, observe, plan};
 use byssus::report::{self, Check, DryRunReport, Level, StatusReport};
 use byssus::runtime::{Runtime, Subject};
 use byssus::state::{LoadError, LoadOutcome, State, StateStore};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::Parser as _;
 use tracing::Level as TracingLevel;
-
-/// Byssus: live, read-only filesystem attachments between isolated workspaces.
-#[derive(Debug, Parser)]
-#[command(name = "byssus", version, about, long_about = None)]
-struct Cli {
-    #[command(flatten)]
-    config: ConfigArgs,
-
-    /// Log level for diagnostics on stderr: error, warn, info, debug, trace.
-    #[arg(long, global = true, value_name = "LEVEL")]
-    log_level: Option<LogLevel>,
-
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Debug, Args)]
-struct ConfigArgs {
-    /// Main configuration file [default: /etc/byssus/byssus.toml].
-    #[arg(long, global = true, value_name = "FILE")]
-    config: Option<PathBuf>,
-
-    /// Drop-in configuration directory [default: /etc/byssus/conf.d].
-    #[arg(long, global = true, value_name = "DIR")]
-    config_dir: Option<PathBuf>,
-}
-
-impl ConfigArgs {
-    fn source(&self) -> ConfigSource {
-        ConfigSource {
-            file: self.config.clone(),
-            dir: self.config_dir.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum Format {
-    Text,
-    Json,
-}
-
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Show every desired or recorded member and its mount state.
-    ///
-    /// Exits 1 if any member is in an error state.
-    Status {
-        /// Output format.
-        #[arg(long, value_enum, default_value_t = Format::Text)]
-        format: Format,
-    },
-    /// Validate configuration, kernel, permissions and propagation, and show
-    /// what a reconcile would do, without mounting anything.
-    ///
-    /// When run as root with a service user configured, checks run as that
-    /// user. Exits 1 if any check fails.
-    DryRun {
-        /// Output format.
-        #[arg(long, value_enum, default_value_t = Format::Text)]
-        format: Format,
-    },
-    /// Perform one reconciliation pass and exit. Requires CAP_SYS_ADMIN and
-    /// refuses to run while byssusd holds the state lock.
-    Reconcile {
-        #[command(flatten)]
-        privileges: PrivilegeArgs,
-    },
-    /// Check whether the configuration would be accepted by a reload,
-    /// optionally with drop-in fragments added, replaced or removed, without
-    /// installing anything or signaling the daemon.
-    ///
-    /// Runs the same validation as a SIGHUP reload: parsing, ownership and
-    /// modes, cross-group rules, paths, opening every root and membership
-    /// directory, watches and propagation. When run as root with a service
-    /// user configured, access is checked as that user. Exits 0 if the
-    /// configuration would be accepted, 1 otherwise.
-    Check {
-        /// Candidate drop-in fragment, treated as installed in the drop-in
-        /// directory under its file name (replacing a fragment of that name).
-        /// May be repeated.
-        #[arg(long = "add", value_name = "FILE")]
-        add: Vec<PathBuf>,
-
-        /// File name of an installed drop-in fragment to leave out. May be
-        /// repeated.
-        #[arg(long = "remove", value_name = "NAME")]
-        remove: Vec<String>,
-
-        /// Treat target roots on slave mounts as acceptable (as byssusd
-        /// --allow-slave-namespace would).
-        #[arg(long)]
-        allow_slave_namespace: bool,
-
-        /// Output format.
-        #[arg(long, value_enum, default_value_t = Format::Text)]
-        format: Format,
-    },
-    /// Print the version.
-    Version,
-}
-
-#[derive(Debug, Args)]
-struct PrivilegeArgs {
-    /// Service user to switch to when started as root (overrides daemon.user).
-    #[arg(long, value_name = "USER")]
-    user: Option<String>,
-
-    /// Permit running as UID 0 without a service user (development and tests).
-    #[arg(long)]
-    allow_root: bool,
-
-    /// Permit target roots on slave mounts.
-    #[arg(long)]
-    allow_slave_namespace: bool,
-}
 
 fn main() -> ExitCode {
     let cli = Cli::parse();

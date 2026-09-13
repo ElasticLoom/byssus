@@ -14,6 +14,7 @@
 compile_error!("byssus relies on Linux-specific mount APIs and only builds on Linux");
 
 pub mod app;
+pub mod cli;
 pub mod config;
 pub mod daemon;
 pub mod fsops;

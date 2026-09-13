@@ -25,6 +25,13 @@ done
 mkdir -p target/package dist
 sed 's|/usr/local/bin/byssusd|/usr/bin/byssusd|' contrib/systemd/byssusd.service \
     > target/package/byssusd.service
+# Manual pages, compressed as distributions expect; -n omits the name and
+# timestamp so packages are reproducible.
+rm -rf target/package/man
+mkdir -p target/package/man
+for page in contrib/man/*.8; do
+    gzip -9 -n -c "$page" > "target/package/man/$(basename "$page").gz"
+done
 if grep -q /usr/local/bin target/package/byssusd.service; then
     echo "error: packaged unit still refers to /usr/local/bin" >&2
     exit 1
