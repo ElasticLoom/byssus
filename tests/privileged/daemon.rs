@@ -543,7 +543,7 @@ fn read_write_group_through_container_view() {
 }
 
 /// Receives notify messages until one satisfies `pred`, returning it.
-fn next_notify(
+pub fn next_notify(
     socket: &std::os::unix::net::UnixDatagram,
     what: &str,
     pred: impl Fn(&str) -> bool,

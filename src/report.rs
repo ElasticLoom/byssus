@@ -548,9 +548,18 @@ pub struct StatusReport {
     pub state_file: String,
     /// Whether the state file could be read.
     pub ownership_known: bool,
+    /// The user ID access was checked as (the service user when run as root),
+    /// if privileges could be normalized.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked_as_uid: Option<u32>,
     /// Notes (for example why the state file could not be read).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+    /// Groups (`set/group`, or `set/*` for a whole set) whose directories
+    /// could not be read, with the reason. Their members are not listed and
+    /// the daemon leaves them unchanged.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub unavailable: BTreeMap<String, String>,
     /// Number of hidden membership entries ignored, per group.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub ignored: BTreeMap<String, usize>,
@@ -562,9 +571,15 @@ impl StatusReport {
     /// The worst member level.
     #[must_use]
     pub fn level(&self) -> Level {
+        let unavailable = if self.unavailable.is_empty() {
+            Level::Ok
+        } else {
+            Level::Error
+        };
         self.members
             .iter()
             .map(|m| m.state.level())
+            .chain(std::iter::once(unavailable))
             .max()
             .unwrap_or(Level::Ok)
     }
@@ -583,6 +598,9 @@ impl StatusReport {
                 " (unreadable: ownership unknown)"
             }
         );
+        if let Some(uid) = self.checked_as_uid {
+            let _ = writeln!(out, "checked_as_uid = {uid}");
+        }
         for note in &self.notes {
             let _ = writeln!(out, "note: {note}");
         }
@@ -593,8 +611,23 @@ impl StatusReport {
                 if *count == 1 { "y" } else { "ies" }
             );
         }
-        if self.members.is_empty() {
+        if self.members.is_empty() && self.unavailable.is_empty() {
             out.push_str("\nno members\n");
+        }
+        if !self.unavailable.is_empty() {
+            out.push('\n');
+        }
+        for (group, reason) in &self.unavailable {
+            let label = if group.ends_with("/*") {
+                group.clone()
+            } else {
+                format!("{group}/*")
+            };
+            let _ = writeln!(
+                out,
+                "{label}  state=group_unavailable  detail={}",
+                crate::logging::quote(reason)
+            );
         }
         render_members(&mut out, &self.members, |_| true);
         out
@@ -834,7 +867,9 @@ mod tests {
         let report = StatusReport {
             state_file: "/var/lib/byssus/state.json".into(),
             ownership_known: false,
+            checked_as_uid: None,
             notes: vec!["permission denied; join the byssus group".into()],
+            unavailable: BTreeMap::new(),
             ignored: BTreeMap::new(),
             members: member_statuses(&observed, &p, &state, false),
         };
@@ -846,6 +881,51 @@ mod tests {
         assert!(text.contains("g/a  state=mounted  target=/view/a"));
         assert!(text.contains("g/d  state=source_unavailable  target=/view/d  detail=ENOENT"));
         assert_eq!(report.level(), Level::Warn);
+        assert!(!text.contains("checked_as_uid"));
+    }
+
+    #[test]
+    fn unavailable_groups_are_errors() {
+        let mut unavailable = BTreeMap::new();
+        unavailable.insert(
+            "projects/acme/research".to_owned(),
+            "membership directory unreadable: Permission denied (os error 13)".to_owned(),
+        );
+        unavailable.insert(
+            "other/*".to_owned(),
+            "membership root has been deleted".to_owned(),
+        );
+        let report = StatusReport {
+            state_file: "/s".into(),
+            ownership_known: true,
+            checked_as_uid: Some(998),
+            notes: vec![],
+            unavailable,
+            ignored: BTreeMap::new(),
+            members: vec![],
+        };
+        let text = report.to_text();
+        assert!(text.contains("checked_as_uid = 998\n"), "{text}");
+        assert!(
+            text.contains(
+                "projects/acme/research/*  state=group_unavailable  detail=\"membership directory unreadable: Permission denied (os error 13)\"\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "other/*  state=group_unavailable  detail=\"membership root has been deleted\"\n"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("no members"), "{text}");
+        assert_eq!(report.level(), Level::Error);
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["checked_as_uid"], 998);
+        assert_eq!(
+            json["unavailable"]["other/*"],
+            "membership root has been deleted"
+        );
     }
 
     #[test]
@@ -875,7 +955,9 @@ mod tests {
         let report = StatusReport {
             state_file: "/s".into(),
             ownership_known: true,
+            checked_as_uid: Some(998),
             notes: vec![],
+            unavailable: BTreeMap::new(),
             ignored,
             members: members.clone(),
         };

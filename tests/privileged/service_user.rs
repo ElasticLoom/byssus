@@ -223,3 +223,76 @@ fn check_detects_membership_directory_unreadable_by_service_user() {
     assert!(report.contains("cannot open membership"), "{report}");
     assert!(report.contains("Permission denied"), "{report}");
 }
+
+#[test]
+#[ignore = "requires subordinate UIDs; run scripts/integration-tests.sh"]
+fn group_directories_unreadable_by_service_user_are_reported() {
+    require_subids();
+    let _user = FakeUser::install();
+    let d = Deployment::new();
+    let p = |s: &str| d.path(s).display().to_string();
+    let content = fs::read_to_string(d.path("etc/byssus.toml"))
+        .unwrap()
+        .replace("[daemon]\n", "[daemon]\nuser = \"byssus\"\n")
+        + &format!(
+            "\n[group_sets.set]\nmembership_root = \"{}\"\nsource_root = \"{}\"\n\
+             source = \"{{name}}\"\ntarget_root = \"{}\"\ntarget = \"{{group}}/{{name}}\"\n",
+            p("set-members"),
+            p("src"),
+            p("view"),
+        );
+    fs::write(d.path("etc/byssus.toml"), content).unwrap();
+    prepare_for_service_user(&d);
+    d.add_source("a");
+    // A group directory that root can read but the service user cannot, as
+    // when it was created without the inherited ACL.
+    let acme = d.path("set-members/acme");
+    fs::create_dir_all(&acme).unwrap();
+    fs::set_permissions(d.path("set-members"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(acme.join("a"), "").unwrap();
+    fs::set_permissions(&acme, fs::Permissions::from_mode(0o750)).unwrap();
+
+    // status run as root looks as the service user.
+    let out = d.byssus(&["status"]);
+    let report = text(&out.stdout);
+    assert!(!out.status.success(), "{report}");
+    assert!(
+        report.contains(&format!("checked_as_uid = {SERVICE_UID}\n")),
+        "{report}"
+    );
+    assert!(
+        report.contains(
+            "set/acme/*  state=group_unavailable  detail=\"membership directory unreadable: "
+        ),
+        "{report}"
+    );
+    assert!(report.contains("Permission denied"), "{report}");
+    assert!(!report.contains("would_mount"), "{report}");
+
+    // The daemon's status line names the unreadable group.
+    let socket_path = d.path("notify.sock");
+    let socket = std::os::unix::net::UnixDatagram::bind(&socket_path).unwrap();
+    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o777)).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let daemon = crate::daemon::Daemon::start_with_env(&d, &[], &[("NOTIFY_SOCKET", &socket_path)]);
+    let ready = crate::daemon::next_notify(&socket, "READY", |m| m.contains("READY=1"));
+    assert!(
+        ready.contains("STATUS=1 group(s), 0 mount(s); unreadable: set/acme (see byssus status)"),
+        "{ready}\n{}",
+        daemon.log()
+    );
+
+    // Fixing the permissions is picked up without a reload.
+    fs::set_permissions(&acme, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::daemon::next_notify(&socket, "status after fixing permissions", |m| {
+        m.contains("STATUS=2 group(s), 1 mount(s)") && !m.contains("unreadable")
+    });
+    assert!(d.path("view/acme/a/README").exists() || d.path("view/acme/a").exists());
+    let out = d.byssus(&["status"]);
+    let report = text(&out.stdout);
+    assert!(report.contains("set/acme/a  state=mounted"), "{report}");
+    assert!(!report.contains("group_unavailable"), "{report}");
+    assert_eq!(daemon.stop(), 0);
+}

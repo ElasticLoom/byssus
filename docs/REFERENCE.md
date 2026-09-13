@@ -235,7 +235,12 @@ byssus version
   conflicting, or has changed source; plus rejected membership entries with
   their reasons and the number of ignored hidden entries. Exits 1 only for
   error states (conflicts, unavailable targets or groups); rejected entries
-  and unavailable sources are warnings. If the state file cannot be read, it
+  and unavailable sources are warnings. Run as root with `daemon.user`
+  configured, it switches to that user and drops every capability first, so
+  it shows what the daemon can see (`checked_as_uid`): a group whose
+  membership directory the service user cannot read is listed as
+  `<group>/*  state=group_unavailable` with the reason (an error), rather
+  than its members appearing as `would_mount`. If the state file cannot be read, it
   explains why (for example, "join the `byssus` group") and falls back to a
   view derived from the kernel alone, labeled *ownership unknown*.
 - **`dry-run`** — a full validation pass without mounting: configuration,

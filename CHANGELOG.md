@@ -19,6 +19,9 @@ and this project adheres to
   groups at runtime without configuration changes or root. Templates use
   `{group}` and `{subgroup}` to confine sources and give each group its own
   view.
+- `byssus status` run as root looks as the service user, reporting groups
+  whose directories that user cannot read as `group_unavailable`; the systemd
+  status line names unreadable groups.
 - `byssus` CLI: `status`, `dry-run`, `check`, `reconcile` and `version`, with
   text and JSON output. `check` validates candidate drop-in fragments exactly
   as a reload would, before they are installed.

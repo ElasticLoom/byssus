@@ -2,6 +2,7 @@
 //!
 //! See `docs/DESIGN.md`, "Daemon lifecycle".
 
+use std::collections::BTreeSet;
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
@@ -41,6 +42,9 @@ const DEBOUNCE: Duration = Duration::from_millis(150);
 /// Upper bound on how long continuous changes can postpone a pass.
 const MAX_DEBOUNCE: Duration = Duration::from_secs(1);
 
+/// Most group names listed in the systemd status line.
+const MAX_STATUS_NAMES: usize = 5;
+
 struct Daemon {
     options: Options,
     config: Config,
@@ -60,6 +64,8 @@ struct Daemon {
     notifier: Notifier,
     /// Why the most recent reload was rejected, until one succeeds.
     last_reload_error: Option<String>,
+    /// Groups and sets whose directories could not be read in the last pass.
+    unreadable: BTreeSet<String>,
 }
 
 /// Runs the daemon until `SIGTERM` or `SIGINT`.
@@ -114,6 +120,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         notes: reconcile::NoteLog::default(),
         notifier,
         last_reload_error: None,
+        unreadable: BTreeSet::new(),
     };
     tracing::info!(
         msg = "byssusd started",
@@ -152,8 +159,15 @@ impl Daemon {
             &mut self.notes,
             &mut |runtime| watcher.sync(runtime),
         );
+        self.unreadable.clear();
         for note in &pass.observed.notes {
             match note {
+                reconcile::observe::Note::MembershipUnreadable { group, .. } => {
+                    self.unreadable.insert(group.to_string());
+                }
+                reconcile::observe::Note::SetRootUnreadable { set, .. } => {
+                    self.unreadable.insert(reconcile::set_label(set));
+                }
                 reconcile::observe::Note::MembershipDeleted { group } => {
                     self.degraded.groups.insert(group.clone());
                 }
@@ -200,6 +214,23 @@ impl Daemon {
                 .chain(self.degraded.sets.iter().map(reconcile::set_label))
                 .collect();
             let _ = write!(text, "; degraded: {}", names.join(", "));
+        }
+        if !self.unreadable.is_empty() {
+            let shown: Vec<&str> = self
+                .unreadable
+                .iter()
+                .take(MAX_STATUS_NAMES)
+                .map(String::as_str)
+                .collect();
+            let _ = write!(text, "; unreadable: {}", shown.join(", "));
+            if self.unreadable.len() > MAX_STATUS_NAMES {
+                let _ = write!(
+                    text,
+                    " and {} more",
+                    self.unreadable.len() - MAX_STATUS_NAMES
+                );
+            }
+            text.push_str(" (see byssus status)");
         }
         if let Some(error) = &self.last_reload_error {
             let _ = write!(

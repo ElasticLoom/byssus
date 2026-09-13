@@ -276,27 +276,65 @@ fn load_state_read_only(config: &Config) -> (State, bool, Vec<String>, String) {
 fn status(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
     let loaded = app::load_config(source, OwnershipPolicy::Warn)?;
     let config = loaded.config;
-    let (state, ownership_known, mut notes, state_file) = load_state_read_only(&config);
+
+    // Look as the daemon would: as the service user when run as root, so
+    // directories the daemon cannot read show as unavailable rather than as
+    // members about to be mounted.
+    let mut notes = Vec::new();
+    let checked_as_uid =
+        match app::normalize_privileges(Goal::DropAll, config.daemon.user.as_deref(), true) {
+            Ok(plan) => {
+                if plan.final_uid == 0 {
+                    notes.push(ROOT_WITHOUT_USER_WARNING.to_owned());
+                }
+                Some(plan.final_uid)
+            }
+            Err(e) => {
+                notes.push(format!("{e:#}; showing access as the current user"));
+                app::normalize_privileges(Goal::DropAll, None, true)
+                    .context("cannot drop capabilities")?;
+                None
+            }
+        };
+
+    let (state, ownership_known, state_notes, state_file) = load_state_read_only(&config);
+    notes.extend(state_notes);
 
     let (mut runtime, open_errors) = Runtime::open_lenient(&config);
     let degraded = degraded_from(&open_errors);
-    notes.extend(open_errors.iter().map(ToString::to_string));
+    let mut unavailable: BTreeMap<String, String> = open_errors
+        .iter()
+        .map(|e| {
+            let label = match &e.subject {
+                Subject::Group(group) => group.to_string(),
+                Subject::Set(set) => reconcile::set_label(set),
+            };
+            (
+                label,
+                format!("cannot open {} {}: {}", e.field, e.path, e.source),
+            )
+        })
+        .collect();
 
     let unique = probe::probe_kernel().unique_mount_ids();
     let observed =
         reconcile::discover_and_observe(&mut runtime, &state, &degraded, unique, &mut |_| {});
-    notes.extend(observed.notes.iter().filter_map(|n| match n {
-        observe::Note::SetRootDeleted { set } => Some(format!(
-            "group set '{set}': membership root has been deleted"
+    unavailable.extend(observed.notes.iter().filter_map(|n| match n {
+        observe::Note::SetRootDeleted { set } => Some((
+            reconcile::set_label(set),
+            "membership root has been deleted".to_owned(),
         )),
-        observe::Note::SetRootUnreadable { set, error } => Some(format!(
-            "group set '{set}': membership root unreadable: {error}"
+        observe::Note::SetRootUnreadable { set, error } => Some((
+            reconcile::set_label(set),
+            format!("membership root unreadable: {error}"),
         )),
-        observe::Note::MembershipDeleted { group } => Some(format!(
-            "group '{group}': membership directory has been deleted"
+        observe::Note::MembershipDeleted { group } => Some((
+            group.to_string(),
+            "membership directory has been deleted".to_owned(),
         )),
-        observe::Note::MembershipUnreadable { group, error } => Some(format!(
-            "group '{group}': membership directory unreadable: {error}"
+        observe::Note::MembershipUnreadable { group, error } => Some((
+            group.to_string(),
+            format!("membership directory unreadable: {error}"),
         )),
         _ => None,
     }));
@@ -309,7 +347,9 @@ fn status(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
     let report = StatusReport {
         state_file,
         ownership_known,
+        checked_as_uid,
         notes,
+        unavailable,
         ignored: observed
             .ignored
             .iter()

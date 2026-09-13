@@ -253,8 +253,10 @@ The shipped unit:
 - uses `Type=notify`: `byssusd` reports ready only after its startup
   reconcile, and the unit starts before Docker, containerd and Podman, so
   containers see every member from the start;
-- reports group and mount counts, degraded groups and rejected reloads in
-  `systemctl status byssusd` (or `systemctl show -p StatusText byssusd`).
+- reports group and mount counts, degraded groups, groups whose directories
+  it cannot read, and rejected reloads in `systemctl status byssusd` (or
+  `systemctl show -p StatusText byssusd`), for example
+  `3 group(s), 5 mount(s); unreadable: projects/acme/research (see byssus status)`.
 
 **Do not add options that create a mount namespace** — `ProtectSystem=`,
 `PrivateTmp=`, `ReadWritePaths=` and many others (the full list is at the top
@@ -340,7 +342,7 @@ container runtimes start.
 | `are slave mounts ... refusing to start` | `byssusd` is running in its own mount namespace — usually a systemd option such as `ProtectSystem=`, `PrivateTmp=`, `PrivateNetwork=` or `PrivateIPC=`. Remove it. |
 | `op=degrade` | A membership directory, or a group set's `membership_root` (`group=<set>/*`), was moved, deleted or unmounted. Mounts are kept. Restore the directory and `systemctl reload byssusd`. |
 | `op=reject group=<set>/* ...` | An entry in a group set's directory tree is not a directory with a valid name. Rename or remove it. |
-| A group set's group directory exists but nothing changes, with `op=scan ... membership directory unreadable` | `byssus` lacks read or search access to that directory or its parent; the group is left unchanged until it can be read. Add the default ACL shown in [Group set membership](#group-set-membership). |
+| `state=group_unavailable` in `byssus status`, `unreadable:` in the systemd status, or `op=scan ... membership directory unreadable` in the log | `byssus` lacks read or search access to that membership directory (for a group set, often a group directory created without the inherited ACL, or moved in from elsewhere). The group is left unchanged until it can be read; fixing the permissions is picked up automatically. For a group set: `setfacl -R -m u:byssus:rX <membership_root>` and `setfacl -R -d -m u:byssus:rX <membership_root>`. |
 | Members of a newly created group fail with `Permission denied` on the target | `byssus` cannot create the member directory in the view. Grant it write access to the view (or create the view with an ACL for it). |
 | `state file is corrupt` | The corrupt file was renamed to `state.json.corrupt-<time>`. Existing Byssus mounts now show as conflicts; unmount them manually (or reboot), then let Byssus re-create them. |
 | `another Byssus process holds the state lock` | `byssusd` is running; use `systemctl reload byssusd` instead of `byssus reconcile`. |

@@ -612,7 +612,8 @@ Additional rules:
 - **`SIGHUP`:** transactional reload, bracketed by `RELOADING=1` and
   `READY=1` notifications; the reload's reconcile pass runs before `READY=1`.
   The systemd status line (`STATUS=`) reports group and mount counts,
-  degraded groups and the most recent rejected reload.
+  degraded groups, groups whose directories could not be read in the last
+  pass, and the most recent rejected reload.
 - **`SIGTERM` / `SIGINT`:** notify `STOPPING=1`, write the state file and exit 0. Mounts are **not**
   removed.
 
