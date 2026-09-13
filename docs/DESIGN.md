@@ -427,9 +427,8 @@ Byssus closes the resulting race by pinning the mount first:
    descriptor now references one specific mount.
 2. Verify its identity against the state record.
 3. `umount2("/proc/self/fd/<N>", MNT_DETACH)`. The kernel resolves the
-   descriptor's magic link to exactly the mount that was verified; nothing can
-   be substituted between check and use. `MNT_DETACH` performs a lazy unmount
-   so busy files do not block removal.
+   descriptor's magic link to the mount that was verified. `MNT_DETACH`
+   performs a lazy unmount so busy files do not block removal.
 4. Remove the state record and write the state file.
 5. Remove the leaf target directory with `unlinkat(parent_fd, leaf,
    AT_REMOVEDIR)` if it is empty. Parents created for nested targets are left

@@ -7,7 +7,7 @@
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 
-use rustix::fs::{AtFlags, StatxAttributes, StatxFlags};
+use rustix::fs::{AtFlags, Mode, OFlags, StatxAttributes, StatxFlags};
 use rustix::mount::{MoveMountFlags, OpenTreeFlags, UnmountFlags};
 
 use crate::config::MountAttrs;
@@ -182,8 +182,7 @@ fn open_verified(
 ///
 /// The target is opened and pinned, its identity verified, and then
 /// `umount2("/proc/self/fd/N", MNT_DETACH)` is called: the kernel resolves the
-/// magic link to exactly the verified mount. The caller must have verified
-/// that `/proc` is procfs (see [`crate::probe::verify_procfs`]).
+/// magic link to the verified mount.
 pub fn unmount_verified(
     target_root: BorrowedFd<'_>,
     relative: &str,
@@ -192,6 +191,14 @@ pub fn unmount_verified(
 ) -> Result<(), VerifiedOpError> {
     let fd = open_verified(target_root, relative, expected, unique_supported)?;
     let link = format!("/proc/self/fd/{}", fd.as_raw_fd());
+    // umount2 takes only a path, so check that the link still leads to the
+    // verified mount in case /proc was replaced. Changing /proc, or stacking a
+    // mount on the target before umount2 runs, needs mount privileges here.
+    let via_link = rustix::fs::open(link.as_str(), OFlags::PATH | OFlags::CLOEXEC, Mode::empty())
+        .map_err(io::Error::from)?;
+    if !read_identity(via_link.as_fd(), unique_supported)?.matches(expected) {
+        return Err(io::Error::other(format!("{link} does not lead to the verified mount")).into());
+    }
     rustix::mount::unmount(link.as_str(), UnmountFlags::DETACH).map_err(io::Error::from)?;
     drop(fd);
     Ok(())

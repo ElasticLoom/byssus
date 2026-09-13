@@ -2,7 +2,7 @@
 //! propagation.
 
 use std::fs;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::fs::PermissionsExt;
 
 use byssus::config::MountAttrs;
@@ -11,7 +11,8 @@ use byssus::mount::{self, VerifiedOpError};
 use byssus::mountinfo::MountTable;
 use byssus::probe::{self, PropagationCheck};
 use byssus::reconcile::plan::TargetState;
-use rustix::mount::{MountFlags, UnmountFlags};
+use rustix::fs::{Mode, OFlags};
+use rustix::mount::{MountFlags, MountPropagationFlags, UnmountFlags};
 
 use crate::common::{Sandbox, errno_of};
 
@@ -209,6 +210,86 @@ fn stacked_mount_on_top_is_a_mismatch() {
         Err(VerifiedOpError::IdentityMismatch { .. })
     ));
     assert!(sb.path("view/a/top.txt").exists());
+}
+
+#[test]
+#[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
+fn fd_link_unmount_detaches_a_mount_stacked_after_pinning() {
+    // Documents the kernel behavior noted in unmount_verified: opening
+    // /proc/self/fd/N reaches the pinned mount, but umount2 on it detaches a
+    // mount stacked on top after pinning.
+    let sb = Sandbox::new();
+    sb.write("src/other/workspace/top.txt", "top");
+    let m = setup(&sb, "a");
+    let id = mount_member(&m, "a", DEFAULT);
+    let pinned = fsops::resolve_dir(m.target_root.as_fd(), "a").unwrap();
+    rustix::mount::mount_bind(
+        sb.path("src/other/workspace").as_path(),
+        sb.path("view/a").as_path(),
+    )
+    .unwrap();
+    let link = format!("/proc/self/fd/{}", pinned.as_raw_fd());
+
+    let via_link =
+        rustix::fs::open(link.as_str(), OFlags::PATH | OFlags::CLOEXEC, Mode::empty()).unwrap();
+    assert!(
+        mount::read_identity(via_link.as_fd(), unique())
+            .unwrap()
+            .matches(&id)
+    );
+    rustix::mount::unmount(link.as_str(), UnmountFlags::DETACH).unwrap();
+    assert!(
+        mount::read_identity(pinned.as_fd(), unique())
+            .unwrap()
+            .matches(&id)
+    );
+    assert_eq!(
+        mount::inspect(m.target_root.as_fd(), "a", unique()),
+        TargetState::Mounted {
+            identity: mount::read_identity(pinned.as_fd(), unique()).unwrap(),
+            attrs: mount::observed_attrs(pinned.as_fd()).ok(),
+        }
+    );
+    assert!(!sb.path("view/a/top.txt").exists());
+}
+
+#[test]
+#[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
+fn verified_unmount_refuses_a_replaced_proc_fd_directory() {
+    let code = crate::privileges::in_child_with(|| {
+        // SAFETY: the child is single-threaded; a private mount namespace
+        // keeps the overmount from outliving it.
+        assert_eq!(unsafe { libc::unshare(libc::CLONE_NEWNS) }, 0, "unshare");
+        rustix::mount::mount_change(
+            "/",
+            MountPropagationFlags::PRIVATE | MountPropagationFlags::REC,
+        )
+        .unwrap();
+        let sb = Sandbox::new();
+        sb.write("src/decoy/workspace/decoy.txt", "decoy");
+        let m = setup(&sb, "a");
+        let id = mount_member(&m, "a", DEFAULT);
+        mount_member(&m, "decoy", DEFAULT);
+
+        // Every descriptor number leads to the decoy mount.
+        let fake = sb.mkdir("fake-fd");
+        for n in 0..256 {
+            std::os::unix::fs::symlink(sb.path("view/decoy"), fake.join(n.to_string())).unwrap();
+        }
+        rustix::mount::mount_bind(fake.as_path(), "/proc/self/fd").unwrap();
+
+        let result = mount::unmount_verified(m.target_root.as_fd(), "a", &id, unique());
+        let untouched =
+            sb.path("view/a/hello.txt").exists() && sb.path("view/decoy/decoy.txt").exists();
+        match result {
+            Err(VerifiedOpError::Io(_)) if untouched => 0,
+            other => {
+                eprintln!("unexpected: {other:?}, mounts untouched: {untouched}");
+                1
+            }
+        }
+    });
+    assert_eq!(code, 0);
 }
 
 #[test]
