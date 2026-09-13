@@ -73,6 +73,30 @@ target      = "{name}"
 membership  = "/srv/example/membership/research"
 ```
 
+## Install
+
+Byssus has no release yet; install from source (Linux 5.12+, Rust 1.85+):
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --locked --target x86_64-unknown-linux-musl
+sudo install -m 0755 target/x86_64-unknown-linux-musl/release/byssusd /usr/local/bin/
+sudo install -m 0755 target/x86_64-unknown-linux-musl/release/byssus  /usr/local/bin/
+```
+
+Releases will provide `.deb` and `.rpm` packages and static binary archives:
+
+```bash
+sudo apt install ./byssus_<version>-1_amd64.deb     # Debian, Ubuntu
+sudo dnf install ./byssus-<version>-1.x86_64.rpm    # Fedora, RHEL
+```
+
+Packages install the binaries, systemd unit and service user but do not start
+the daemon. Then set up source directories, the propagation anchor and group
+configuration, check with `sudo byssus dry-run`, and start with
+`sudo systemctl enable --now byssusd` — see the
+[installation and operations guide](docs/OPERATIONS.md).
+
 ## Try it
 
 On Linux 5.12+, without root:
@@ -86,7 +110,7 @@ simulated container and `byssusd` running. Type `help` for things to try.
 
 ## Documentation
 
-- [Operations guide](docs/OPERATIONS.md) — install, configure, run, troubleshoot
+- [Installation and operations guide](docs/OPERATIONS.md) — install, configure, run, troubleshoot
 - [Integration guide](docs/INTEGRATION.md) — containers and managing membership from an application
 - [Reference](docs/REFERENCE.md) — configuration, naming rules, CLI, log format
 - [Design and security contract](docs/DESIGN.md) and [design decisions](docs/DECISIONS.md)
