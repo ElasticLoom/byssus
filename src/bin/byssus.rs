@@ -17,7 +17,7 @@ use byssus::privileges::plan::Goal;
 use byssus::probe::{self, Feature, PropagationCheck};
 use byssus::reconcile::{self, Trigger, observe, plan};
 use byssus::report::{self, Check, DryRunReport, Level, StatusReport};
-use byssus::runtime::Runtime;
+use byssus::runtime::{Runtime, Subject};
 use byssus::state::{LoadError, LoadOutcome, State, StateStore};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use tracing::Level as TracingLevel;
@@ -180,6 +180,22 @@ const ROOT_WITHOUT_USER_WARNING: &str = "checks ran as root because daemon.user 
     problems for the daemon's service user (for example an unreadable membership or source \
     directory) are not detected; set daemon.user = \"byssus\" in the main configuration";
 
+/// Degraded groups and sets from open failures.
+fn degraded_from(errors: &[byssus::runtime::OpenGroupError]) -> reconcile::Degraded {
+    let mut degraded = reconcile::Degraded::default();
+    for e in errors {
+        match &e.subject {
+            Subject::Group(group) => {
+                degraded.groups.insert(group.clone());
+            }
+            Subject::Set(set) => {
+                degraded.sets.insert(set.clone());
+            }
+        }
+    }
+    degraded
+}
+
 fn exit_for(level: Level) -> ExitCode {
     if level == Level::Error {
         ExitCode::FAILURE
@@ -263,12 +279,19 @@ fn status(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
     let (state, ownership_known, mut notes, state_file) = load_state_read_only(&config);
 
     let (mut runtime, open_errors) = Runtime::open_lenient(&config);
-    let degraded: BTreeSet<GroupId> = open_errors.iter().map(|e| e.group.clone()).collect();
+    let degraded = degraded_from(&open_errors);
     notes.extend(open_errors.iter().map(ToString::to_string));
 
     let unique = probe::probe_kernel().unique_mount_ids();
-    let observed = observe::observe(&mut runtime, &state, &degraded, unique);
+    let observed =
+        reconcile::discover_and_observe(&mut runtime, &state, &degraded, unique, &mut |_| {});
     notes.extend(observed.notes.iter().filter_map(|n| match n {
+        observe::Note::SetRootDeleted { set } => Some(format!(
+            "group set '{set}': membership root has been deleted"
+        )),
+        observe::Note::SetRootUnreadable { set, error } => Some(format!(
+            "group set '{set}': membership root unreadable: {error}"
+        )),
         observe::Note::MembershipDeleted { group } => Some(format!(
             "group '{group}': membership directory has been deleted"
         )),
@@ -353,9 +376,10 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
             "config",
             Level::Ok,
             format!(
-                "{} file(s), {} group(s)",
+                "{} file(s), {} group(s), {} group set(s)",
                 config.files.len(),
-                config.groups.len()
+                config.groups.len(),
+                config.group_sets.len()
             ),
         ));
     }
@@ -427,18 +451,23 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
     let (mut runtime, open_errors) = Runtime::open_lenient(&config);
     let mut extra: BTreeMap<GroupId, (String, Level, Vec<String>)> = BTreeMap::new();
     for e in &open_errors {
-        extra.insert(
-            e.group.clone(),
-            ("unknown".into(), Level::Error, vec![e.to_string()]),
-        );
+        match &e.subject {
+            Subject::Group(group) => {
+                extra.insert(
+                    group.clone(),
+                    ("unknown".into(), Level::Error, vec![e.to_string()]),
+                );
+            }
+            Subject::Set(set) => checks.push(Check::new(
+                format!("group_set.{set}"),
+                Level::Error,
+                e.to_string(),
+            )),
+        }
     }
     let table = MountTable::read_self().context("cannot read /proc/self/mountinfo")?;
-    let names: Vec<(GroupId, byssus::config::AbsPath)> = runtime
-        .groups
-        .values()
-        .map(|g| (g.config.name.clone(), g.config.target_root.clone()))
-        .collect();
-    for (name, target_root) in names {
+    let mut propagation_by_label: BTreeMap<String, (String, Level)> = BTreeMap::new();
+    for (label, target_root) in app::propagation_targets(&runtime) {
         let check = match runtime.roots.get(&target_root) {
             Ok(fd) => probe::check_propagation(fd, &table),
             Err(e) => PropagationCheck::Unknown(e),
@@ -450,11 +479,52 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
             | PropagationCheck::Unknown(_) => Level::Warn,
             PropagationCheck::SlaveOnly | PropagationCheck::SharedAndSlave => Level::Error,
         };
-        extra.insert(name, (check.describe(), level, vec![]));
+        propagation_by_label.insert(label, (check.describe(), level));
     }
 
-    let degraded: BTreeSet<GroupId> = open_errors.iter().map(|e| e.group.clone()).collect();
-    let observed = observe::observe(&mut runtime, &state, &degraded, features.unique_mount_ids());
+    let degraded = degraded_from(&open_errors);
+    let observed = reconcile::discover_and_observe(
+        &mut runtime,
+        &state,
+        &degraded,
+        features.unique_mount_ids(),
+        &mut |_| {},
+    );
+    for set in runtime.sets.values() {
+        let label = reconcile::set_label(&set.config.name);
+        let (description, level) = propagation_by_label
+            .get(&label)
+            .cloned()
+            .unwrap_or_else(|| ("unknown".into(), Level::Warn));
+        let set_level = if observed.scanned_sets.contains(&set.config.name) {
+            level.max(Level::Ok)
+        } else {
+            Level::Error
+        };
+        checks.push(Check::new(
+            format!("group_set.{}", set.config.name),
+            set_level,
+            format!(
+                "membership_root {}; {} group(s); propagation {description}",
+                set.config.membership_root,
+                runtime
+                    .groups
+                    .keys()
+                    .filter(|id| id.set() == Some(&set.config.name))
+                    .count()
+            ),
+        ));
+    }
+    for id in runtime.groups.keys() {
+        let label = id
+            .set()
+            .map_or_else(|| id.to_string(), reconcile::set_label);
+        if let Some((description, level)) = propagation_by_label.get(&label) {
+            extra
+                .entry(id.clone())
+                .or_insert_with(|| (description.clone(), *level, vec![]));
+        }
+    }
     reconcile::NoteLog::default().report(&observed, Trigger::Cli);
     let plan = plan::plan(plan::PlanInput {
         desired: &observed.desired,
@@ -463,11 +533,18 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
         observations: &observed.observations,
     });
     let members = report::member_statuses(&observed, &plan, &state, ownership_known);
-    let groups: Vec<(GroupId, String)> = config
+    let mut groups: Vec<(GroupId, String)> = config
         .groups
         .values()
         .map(|g| (g.name.clone(), g.membership.to_string()))
         .collect();
+    groups.extend(
+        runtime
+            .groups
+            .values()
+            .filter(|g| g.config.name.set().is_some())
+            .map(|g| (g.config.name.clone(), g.config.membership.to_string())),
+    );
     let report = DryRunReport {
         checks,
         groups: report::group_reports(&groups, &observed, &plan, &members, &extra),
@@ -493,10 +570,11 @@ fn reconcile_once(source: &ConfigSource, args: &PrivilegeArgs) -> anyhow::Result
         &mut runtime,
         &mut writer.state,
         &writer.store,
-        &BTreeSet::new(),
+        &reconcile::Degraded::default(),
         environment.features.unique_mount_ids(),
         Trigger::Cli,
         &mut reconcile::NoteLog::default(),
+        &mut |_| {},
     );
     // Persist even when nothing changed, as on daemon shutdown.
     writer
@@ -610,6 +688,9 @@ fn check(
         .map(|p| p.display().to_string())
         .collect();
     report.groups = config.groups.keys().map(ToString::to_string).collect();
+    report
+        .groups
+        .extend(config.group_sets.keys().map(reconcile::set_label));
 
     // Check access as the daemon would: as the service user when run as root.
     let plan = app::normalize_privileges(Goal::DropAll, config.daemon.user.as_deref(), true)
@@ -639,13 +720,29 @@ fn check(
     if let Err(e) = byssus::watcher::Watcher::new(&runtime) {
         report.errors.push(e.to_string());
     }
+    // Group sets' membership roots must be readable; individual groups that
+    // cannot be read are only warnings, as the daemon keeps running.
+    let discovery = runtime.discover(&BTreeSet::new());
+    for note in &discovery.notes {
+        match note {
+            observe::Note::SetRootDeleted { set } => report.errors.push(format!(
+                "group set '{set}': membership root has been deleted"
+            )),
+            observe::Note::SetRootUnreadable { set, error } => report.errors.push(format!(
+                "group set '{set}': cannot read membership root: {error}"
+            )),
+            observe::Note::MembershipUnreadable { group, error } => report.warnings.push(format!(
+                "group '{group}': cannot open membership directory: {error}"
+            )),
+            observe::Note::SetEntryRejected { set, rejection } => report.warnings.push(format!(
+                "group set '{set}': entry '{}' rejected: {}",
+                rejection.display_name, rejection.reason
+            )),
+            _ => {}
+        }
+    }
     let table = MountTable::read_self().context("cannot read /proc/self/mountinfo")?;
-    let targets: Vec<(GroupId, byssus::config::AbsPath)> = runtime
-        .groups
-        .values()
-        .map(|g| (g.config.name.clone(), g.config.target_root.clone()))
-        .collect();
-    for (name, target_root) in targets {
+    for (name, target_root) in app::propagation_targets(&runtime) {
         let propagation = match runtime.roots.get(&target_root) {
             Ok(fd) => probe::check_propagation(fd, &table),
             Err(e) => PropagationCheck::Unknown(e),

@@ -2,7 +2,6 @@
 //!
 //! See `docs/DESIGN.md`, "Daemon lifecycle".
 
-use std::collections::BTreeSet;
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
@@ -11,7 +10,6 @@ use rustix::event::{Timespec, epoll};
 
 use crate::app::{self, ConfigSource};
 use crate::config::{Config, OwnershipPolicy};
-use crate::name::GroupId;
 use crate::notify::Notifier;
 use crate::privileges::plan::Goal;
 use crate::reconcile::{self, Trigger};
@@ -50,7 +48,7 @@ struct Daemon {
     watcher: Watcher,
     store: StateStore,
     state: State,
-    degraded: BTreeSet<GroupId>,
+    degraded: reconcile::Degraded,
     unique_supported: bool,
     epoll: std::os::fd::OwnedFd,
     next_resync: Option<Instant>,
@@ -108,7 +106,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         watcher,
         store,
         state,
-        degraded: BTreeSet::new(),
+        degraded: reconcile::Degraded::default(),
         unique_supported: environment.features.unique_mount_ids(),
         epoll,
         next_resync: None,
@@ -141,6 +139,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 
 impl Daemon {
     fn pass(&mut self, trigger: Trigger) {
+        let watcher = &mut self.watcher;
         let pass = reconcile::run_pass(
             &mut self.runtime,
             &mut self.state,
@@ -149,10 +148,17 @@ impl Daemon {
             self.unique_supported,
             trigger,
             &mut self.notes,
+            &mut |runtime| watcher.sync(runtime),
         );
         for note in &pass.observed.notes {
-            if let reconcile::observe::Note::MembershipDeleted { group } = note {
-                self.degraded.insert(group.clone());
+            match note {
+                reconcile::observe::Note::MembershipDeleted { group } => {
+                    self.degraded.groups.insert(group.clone());
+                }
+                reconcile::observe::Note::SetRootDeleted { set } => {
+                    self.degraded.sets.insert(set.clone());
+                }
+                _ => {}
             }
         }
         let level_debug = pass.plan.steps.is_empty() && pass.plan.findings.is_empty();
@@ -180,11 +186,17 @@ impl Daemon {
         use std::fmt::Write as _;
         let mut text = format!(
             "{} group(s), {} mount(s)",
-            self.config.groups.len(),
+            self.runtime.groups.len(),
             self.state.len()
         );
         if !self.degraded.is_empty() {
-            let names: Vec<String> = self.degraded.iter().map(ToString::to_string).collect();
+            let names: Vec<String> = self
+                .degraded
+                .groups
+                .iter()
+                .map(ToString::to_string)
+                .chain(self.degraded.sets.iter().map(reconcile::set_label))
+                .collect();
             let _ = write!(text, "; degraded: {}", names.join(", "));
         }
         if let Some(error) = &self.last_reload_error {
@@ -261,11 +273,20 @@ impl Daemon {
     fn handle_inotify(&mut self) -> anyhow::Result<()> {
         let changes = self.watcher.drain().context("reading inotify events")?;
         for group in &changes.lost {
-            if self.degraded.insert(group.clone()) {
+            if self.degraded.groups.insert(group.clone()) {
                 tracing::error!(
                     op = "degrade",
                     group = %group,
                     msg = "membership directory was removed, moved or unmounted; keeping existing mounts and making no changes to this group until configuration is reloaded (SIGHUP)",
+                );
+            }
+        }
+        for set in &changes.lost_sets {
+            if self.degraded.sets.insert(set.clone()) {
+                tracing::error!(
+                    op = "degrade",
+                    group = %reconcile::set_label(set),
+                    msg = "group set membership root was removed, moved or unmounted; keeping existing mounts and making no changes to this set until configuration is reloaded (SIGHUP)",
                 );
             }
         }
@@ -294,7 +315,7 @@ impl Daemon {
                 self.config = config;
                 self.runtime = runtime;
                 self.watcher = watcher;
-                self.degraded.clear();
+                self.degraded = reconcile::Degraded::default();
                 self.last_reload_error = None;
                 tracing::info!(
                     msg = "configuration reloaded",

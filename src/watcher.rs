@@ -7,7 +7,7 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
 use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 
-use crate::name::GroupId;
+use crate::name::{GroupId, Name};
 use crate::runtime::Runtime;
 
 /// Events that change membership.
@@ -25,41 +25,125 @@ const MEMBERSHIP_EVENTS: WatchFlags = WatchFlags::CREATE
 /// What a batch of inotify events means for reconciliation.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Changes {
-    /// Some membership directory changed.
+    /// Some membership directory (or group set membership root) changed.
     pub membership_changed: bool,
     /// The kernel event queue overflowed; changes may have been lost.
     pub overflow: bool,
-    /// Groups whose membership directory was deleted, moved or unmounted.
+    /// Statically configured groups whose membership directory was deleted,
+    /// moved or unmounted.
     pub lost: BTreeSet<GroupId>,
+    /// Group sets whose membership root was deleted, moved or unmounted.
+    pub lost_sets: BTreeSet<Name>,
 }
 
-/// An inotify instance watching every configured membership directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Watched {
+    /// A group's membership directory (static or set group).
+    Group(GroupId),
+    /// A group set's membership root.
+    SetRoot(Name),
+}
+
+/// An inotify instance watching every membership directory and group set
+/// membership root.
 #[derive(Debug)]
 pub struct Watcher {
     fd: OwnedFd,
-    groups: BTreeMap<i32, GroupId>,
+    watches: BTreeMap<i32, Watched>,
+    set_groups: BTreeMap<GroupId, i32>,
 }
 
 impl Watcher {
-    /// Creates a non-blocking inotify instance with a watch on each group's
-    /// membership directory.
+    /// Creates a non-blocking inotify instance watching each static group's
+    /// membership directory, each group set's membership root, and the set
+    /// groups currently in `runtime`.
     pub fn new(runtime: &Runtime) -> io::Result<Self> {
         let fd = inotify::init(CreateFlags::CLOEXEC | CreateFlags::NONBLOCK)?;
-        let mut groups = BTreeMap::new();
-        for (name, group) in &runtime.groups {
-            let wd = inotify::add_watch(&fd, group.config.membership.as_path(), MEMBERSHIP_EVENTS)
+        let mut watcher = Self {
+            fd,
+            watches: BTreeMap::new(),
+            set_groups: BTreeMap::new(),
+        };
+        for (id, group) in runtime.groups.iter().filter(|(id, _)| id.set().is_none()) {
+            let wd = watcher
+                .add(group.config.membership.as_path(), MEMBERSHIP_EVENTS)
                 .map_err(|e| {
                     io::Error::new(
-                        io::Error::from(e).kind(),
+                        e.kind(),
                         format!(
-                            "cannot watch membership directory {} of group '{name}': {e}",
+                            "cannot watch membership directory {} of group '{id}': {e}",
                             group.config.membership
                         ),
                     )
                 })?;
-            groups.insert(wd, name.clone());
+            watcher.watches.insert(wd, Watched::Group(id.clone()));
         }
-        Ok(Self { fd, groups })
+        for (name, set) in &runtime.sets {
+            let wd = watcher
+                .add(set.config.membership_root.as_path(), MEMBERSHIP_EVENTS)
+                .map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!(
+                            "cannot watch membership_root {} of group set '{name}': {e}",
+                            set.config.membership_root
+                        ),
+                    )
+                })?;
+            watcher.watches.insert(wd, Watched::SetRoot(name.clone()));
+        }
+        watcher.sync(runtime);
+        Ok(watcher)
+    }
+
+    fn add(&self, path: &std::path::Path, flags: WatchFlags) -> io::Result<i32> {
+        Ok(inotify::add_watch(&self.fd, path, flags)?)
+    }
+
+    /// Watches the membership directories of set groups in `runtime` that are
+    /// not watched yet, and stops watching set groups that are gone. Call after
+    /// each discovery, before membership is read.
+    pub fn sync(&mut self, runtime: &Runtime) {
+        let current: BTreeSet<&GroupId> = runtime
+            .groups
+            .keys()
+            .filter(|id| id.set().is_some())
+            .collect();
+        let gone: Vec<GroupId> = self
+            .set_groups
+            .keys()
+            .filter(|id| !current.contains(id))
+            .cloned()
+            .collect();
+        for id in gone {
+            if let Some(wd) = self.set_groups.remove(&id) {
+                self.watches.remove(&wd);
+                // The watch may already be gone (directory deleted).
+                let _ = inotify::remove_watch(&self.fd, wd);
+            }
+        }
+        for id in current {
+            if self.set_groups.contains_key(id) {
+                continue;
+            }
+            let group = &runtime.groups[id];
+            match self.add(
+                group.config.membership.as_path(),
+                MEMBERSHIP_EVENTS | WatchFlags::DONT_FOLLOW,
+            ) {
+                Ok(wd) => {
+                    self.watches.insert(wd, Watched::Group(id.clone()));
+                    self.set_groups.insert(id.clone(), wd);
+                }
+                // Removed since discovery; the next pass notices.
+                Err(e) if e.raw_os_error() == Some(libc::ENOENT) => {}
+                Err(e) => tracing::warn!(
+                    group = %id,
+                    msg = "cannot watch group membership directory; changes are picked up at the next resync",
+                    error = %e,
+                ),
+            }
+        }
     }
 
     /// Reads and classifies all pending events without blocking.
@@ -79,21 +163,29 @@ impl Watcher {
                 changes.overflow = true;
                 continue;
             }
-            let group = self.groups.get(&event.wd()).cloned();
-            if flags.intersects(ReadFlags::DELETE_SELF | ReadFlags::MOVE_SELF | ReadFlags::IGNORED)
-                || flags.bits() & libc::IN_UNMOUNT != 0
-            {
-                if let Some(group) = group {
-                    changes.lost.insert(group);
+            let self_event = flags
+                .intersects(ReadFlags::DELETE_SELF | ReadFlags::MOVE_SELF | ReadFlags::IGNORED)
+                || flags.bits() & libc::IN_UNMOUNT != 0;
+            match self.watches.get(&event.wd()) {
+                None => {}
+                Some(Watched::Group(id)) if self_event && id.set().is_none() => {
+                    changes.lost.insert(id.clone());
                 }
-                continue;
-            }
-            if group.is_some() {
-                changes.membership_changed = true;
+                Some(Watched::SetRoot(set)) if self_event => {
+                    changes.lost_sets.insert(set.clone());
+                }
+                // For a set group, its directory going away is a membership
+                // change: the group is removed.
+                Some(_) => changes.membership_changed = true,
             }
         }
         for lost in &changes.lost {
-            self.groups.retain(|_, g| g != lost);
+            self.watches
+                .retain(|_, w| *w != Watched::Group(lost.clone()));
+        }
+        for lost in &changes.lost_sets {
+            self.watches
+                .retain(|_, w| *w != Watched::SetRoot(lost.clone()));
         }
         Ok(changes)
     }
@@ -176,6 +268,59 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("cannot watch membership directory")
+        );
+    }
+
+    #[test]
+    fn follows_set_groups() {
+        let dir = tempfile::tempdir().unwrap();
+        for d in ["orgs", "membership/research"] {
+            fs::create_dir_all(dir.path().join(d)).unwrap();
+        }
+        let p = |s: &str| dir.path().join(s).display().to_string();
+        let text = format!(
+            "[group_sets.research]\nmembership_root = \"{}\"\nsource_root = \"{}\"\nsource = \"{{group}}/{{name}}\"\ntarget_root = \"{}\"\ntarget = \"{{group}}/{{name}}\"\n",
+            p("membership/research"),
+            p("orgs"),
+            p("orgs")
+        );
+        let config = load_from_strs(&[(Path::new("/x.toml"), &text, true)])
+            .unwrap()
+            .config;
+        let mut runtime = Runtime::open(&config).unwrap();
+        let mut watcher = Watcher::new(&runtime).unwrap();
+        let root = dir.path().join("membership/research");
+
+        // A new group directory is a change in the set root.
+        fs::create_dir(root.join("acme")).unwrap();
+        assert!(watcher.drain().unwrap().membership_changed);
+
+        // After discovery and sync, the group's own membership is watched.
+        runtime.discover(&BTreeSet::new());
+        watcher.sync(&runtime);
+        fs::write(root.join("acme/libcurl"), "").unwrap();
+        assert!(watcher.drain().unwrap().membership_changed);
+
+        // Deleting a set group is a change, not a loss.
+        fs::remove_file(root.join("acme/libcurl")).unwrap();
+        fs::remove_dir(root.join("acme")).unwrap();
+        let changes = watcher.drain().unwrap();
+        assert!(changes.membership_changed);
+        assert!(changes.lost.is_empty() && changes.lost_sets.is_empty());
+        runtime.discover(&BTreeSet::new());
+        watcher.sync(&runtime);
+        assert!(watcher.set_groups.is_empty());
+
+        // Moving the set root away loses the set.
+        fs::rename(&root, dir.path().join("moved")).unwrap();
+        let changes = watcher.drain().unwrap();
+        assert_eq!(
+            changes
+                .lost_sets
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["research"]
         );
     }
 }

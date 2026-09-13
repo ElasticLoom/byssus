@@ -233,7 +233,15 @@ pub fn member_statuses(
                 name.to_string(),
                 format!("{field} template: {error}"),
             ),
-            Note::MembershipDeleted { .. } | Note::MembershipUnreadable { .. } => continue,
+            Note::SetEntryRejected { set, rejection } => (
+                crate::reconcile::set_label(set),
+                rejection.display_name.clone(),
+                rejection.reason.to_string(),
+            ),
+            Note::MembershipDeleted { .. }
+            | Note::MembershipUnreadable { .. }
+            | Note::SetRootDeleted { .. }
+            | Note::SetRootUnreadable { .. } => continue,
         };
         statuses.push(MemberStatus {
             group,
@@ -728,6 +736,7 @@ mod tests {
             observations: obs,
             frozen: BTreeSet::new(),
             members,
+            scanned_sets: BTreeSet::new(),
             ignored: BTreeMap::new(),
             notes: vec![],
         };

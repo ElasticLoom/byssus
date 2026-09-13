@@ -58,6 +58,10 @@ pub enum RejectReason {
     /// The entry is not a regular file.
     #[error("not a regular file ({0})")]
     NotRegularFile(EntryKind),
+    /// A group set's membership root contains something other than a
+    /// directory.
+    #[error("not a directory ({0})")]
+    NotDirectory(EntryKind),
     /// The file is not empty.
     #[error("file is not empty ({0} bytes)")]
     NotEmpty(u64),

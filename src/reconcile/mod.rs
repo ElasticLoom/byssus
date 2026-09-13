@@ -55,6 +55,58 @@ pub struct Pass {
     pub execution: Execution,
 }
 
+/// Groups and group sets whose records must be left untouched (for example
+/// because their membership directory was lost).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Degraded {
+    /// Degraded groups.
+    pub groups: BTreeSet<GroupId>,
+    /// Degraded group sets.
+    pub sets: BTreeSet<crate::name::Name>,
+}
+
+impl Degraded {
+    /// Whether nothing is degraded.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty() && self.sets.is_empty()
+    }
+}
+
+/// Discovers group sets' groups, then observes every group.
+///
+/// `after_discovery` runs between the two steps, so the daemon can watch newly
+/// discovered group directories before their membership is read and no change
+/// is missed.
+pub fn discover_and_observe(
+    runtime: &mut Runtime,
+    state: &State,
+    degraded: &Degraded,
+    unique_supported: bool,
+    after_discovery: &mut dyn FnMut(&Runtime),
+) -> Observed {
+    let discovery = runtime.discover(&degraded.sets);
+    after_discovery(runtime);
+
+    let mut frozen_sets = degraded.sets.clone();
+    frozen_sets.extend(discovery.unavailable_sets.iter().cloned());
+    let mut frozen = degraded.groups.clone();
+    frozen.extend(discovery.unavailable.iter().cloned());
+    frozen.extend(
+        state
+            .records()
+            .filter(|r| r.group.set().is_some_and(|set| frozen_sets.contains(set)))
+            .map(|r| r.group.clone()),
+    );
+
+    let mut observed = observe::observe(runtime, state, &frozen, unique_supported);
+    let mut notes = discovery.notes;
+    notes.append(&mut observed.notes);
+    observed.notes = notes;
+    observed.scanned_sets = discovery.scanned_sets;
+    observed
+}
+
 /// Observes, plans, logs findings and executes one reconciliation pass.
 ///
 /// `notes` remembers which observation notes were already logged, so a
@@ -64,12 +116,14 @@ pub fn run_pass<S: StateSink>(
     runtime: &mut Runtime,
     state: &mut State,
     sink: &S,
-    degraded: &BTreeSet<GroupId>,
+    degraded: &Degraded,
     unique_supported: bool,
     trigger: Trigger,
     notes: &mut NoteLog,
+    after_discovery: &mut dyn FnMut(&Runtime),
 ) -> Pass {
-    let observed = observe::observe(runtime, state, degraded, unique_supported);
+    let observed =
+        discover_and_observe(runtime, state, degraded, unique_supported, after_discovery);
     notes.report(&observed, trigger);
     let plan = plan::plan(PlanInput {
         desired: &observed.desired,
@@ -132,7 +186,19 @@ fn note_identity(note: &Note) -> ((String, String), String) {
         Note::MembershipUnreadable { group, error } => {
             ((group.to_string(), String::new()), error.clone())
         }
+        Note::SetEntryRejected { set, rejection } => (
+            (set_label(set), rejection.display_name.clone()),
+            rejection.reason.to_string(),
+        ),
+        Note::SetRootDeleted { set } => ((set_label(set), String::new()), "deleted".into()),
+        Note::SetRootUnreadable { set, error } => ((set_label(set), String::new()), error.clone()),
     }
+}
+
+/// How a group set is named in logs and reports: `research/*`.
+#[must_use]
+pub fn set_label(set: &crate::name::Name) -> String {
+    format!("{set}/*")
 }
 
 impl NoteLog {
@@ -143,6 +209,7 @@ impl NoteLog {
         let mut current = BTreeMap::new();
         let mut examined: BTreeSet<String> =
             observed.members.keys().map(ToString::to_string).collect();
+        examined.extend(observed.scanned_sets.iter().map(set_label));
         for note in &observed.notes {
             let (key, detail) = note_identity(note);
             examined.insert(key.0.clone());
@@ -205,6 +272,27 @@ impl NoteLog {
 
 fn log_note(note: &Note, trigger: Trigger) {
     match note {
+        Note::SetEntryRejected { set, rejection } => tracing::warn!(
+            op = "reject",
+            group = %set_label(set),
+            name = %rejection.display_name,
+            trigger = %trigger,
+            reason = %rejection.reason,
+        ),
+        Note::SetRootDeleted { set } => tracing::error!(
+            op = "degrade",
+            group = %set_label(set),
+            trigger = %trigger,
+            msg = "group set membership root has been deleted; keeping existing mounts and making no changes to this set until configuration is reloaded",
+        ),
+        Note::SetRootUnreadable { set, error } => tracing::error!(
+            op = "scan",
+            group = %set_label(set),
+            trigger = %trigger,
+            result = "failed",
+            error = %error,
+            msg = "group set membership root unreadable; set left unchanged",
+        ),
         Note::Rejected { group, rejection } => tracing::warn!(
             op = "reject",
             group = %group,
@@ -388,5 +476,24 @@ mod tests {
             summarize(&log.update(&observed(&["g"], vec![]))),
             ["cleared "]
         );
+    }
+
+    #[test]
+    fn set_entry_rejections_clear_when_the_set_is_rescanned() {
+        let mut log = NoteLog::default();
+        let set = crate::name::Name::new("research").unwrap();
+        let rejected = Note::SetEntryRejected {
+            set: set.clone(),
+            rejection: Rejection {
+                display_name: "file".into(),
+                reason: RejectReason::NotDirectory(EntryKind::Regular { size: 0 }),
+            },
+        };
+        let mut with = observed(&[], vec![rejected]);
+        with.scanned_sets.insert(set.clone());
+        assert_eq!(summarize(&log.update(&with)), ["raised file"]);
+        let mut without = observed(&[], vec![]);
+        without.scanned_sets.insert(set);
+        assert_eq!(summarize(&log.update(&without)), ["cleared file"]);
     }
 }

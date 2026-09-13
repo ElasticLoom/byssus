@@ -10,7 +10,6 @@ use jiff::Timestamp;
 use crate::config::{self, Config, Issue, LoadOptions, Loaded, OwnershipPolicy, Severity};
 use crate::lock::{LockError, StateLock};
 use crate::mountinfo::MountTable;
-use crate::name::GroupId;
 use crate::privileges::apply::{self, describe_caps};
 use crate::privileges::plan::{self as privplan, Goal, PrivilegePlan, Request, Warning};
 use crate::probe::{self, KernelFeatures, PropagationCheck};
@@ -171,19 +170,35 @@ pub fn verify_config_paths(config: &Config) -> anyhow::Result<()> {
     }
 }
 
-/// Checks propagation for every group, logging the outcome. Returns an error
-/// if a target root is only a slave mount and `allow_slave` is false.
+/// The target roots to check for propagation: one per statically configured
+/// group (labeled by group) and one per group set (labeled `set/*`).
+#[must_use]
+pub fn propagation_targets(runtime: &Runtime) -> Vec<(String, crate::config::AbsPath)> {
+    let mut targets: Vec<(String, crate::config::AbsPath)> = runtime
+        .groups
+        .values()
+        .filter(|g| g.config.name.set().is_none())
+        .map(|g| (g.config.name.to_string(), g.config.target_root.clone()))
+        .collect();
+    targets.extend(runtime.sets.values().map(|set| {
+        (
+            crate::reconcile::set_label(&set.config.name),
+            set.config.target_root.clone(),
+        )
+    }));
+    targets
+}
+
+/// Checks propagation for every group and group set, logging the outcome.
+/// Returns an error if a target root is a slave mount and `allow_slave` is
+/// false.
 pub fn check_propagation(
     runtime: &mut Runtime,
     allow_slave: bool,
-) -> anyhow::Result<BTreeMap<GroupId, PropagationCheck>> {
+) -> anyhow::Result<BTreeMap<String, PropagationCheck>> {
     let table = MountTable::read_self().context("cannot read /proc/self/mountinfo")?;
     let mut results = BTreeMap::new();
-    let groups: Vec<(GroupId, crate::config::AbsPath)> = runtime
-        .groups
-        .values()
-        .map(|g| (g.config.name.clone(), g.config.target_root.clone()))
-        .collect();
+    let groups = propagation_targets(runtime);
     let mut slave_groups = Vec::new();
     for (name, target_root) in groups {
         let check = match runtime.roots.get(&target_root) {

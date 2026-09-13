@@ -33,6 +33,26 @@ pub enum Note {
         /// Why.
         error: InterpolateError,
     },
+    /// An entry in a group set's membership root is not a valid group.
+    SetEntryRejected {
+        /// Set.
+        set: Name,
+        /// The rejection.
+        rejection: Rejection,
+    },
+    /// A group set's membership root has been deleted; the set is frozen.
+    SetRootDeleted {
+        /// Set.
+        set: Name,
+    },
+    /// A group set's membership root could not be read; the set is left
+    /// unchanged this pass.
+    SetRootUnreadable {
+        /// Set.
+        set: Name,
+        /// Why.
+        error: String,
+    },
     /// The membership directory has been deleted; the group is frozen.
     MembershipDeleted {
         /// Group.
@@ -59,6 +79,8 @@ pub struct Observed {
     pub frozen: BTreeSet<GroupId>,
     /// Valid members per scanned group.
     pub members: BTreeMap<GroupId, BTreeSet<Name>>,
+    /// Group sets whose membership root was scanned successfully.
+    pub scanned_sets: BTreeSet<Name>,
     /// Hidden membership entries ignored per scanned group.
     pub ignored: BTreeMap<GroupId, Vec<String>>,
     /// Notes to report.
