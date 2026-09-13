@@ -2,7 +2,8 @@
 # End-to-end test of the Debian package and hardened systemd unit on a real
 # systemd host, as root. Intended for disposable CI runners and VMs: it
 # installs the package, creates /srv/byssus-e2e and a byssus-e2e-app user,
-# mounts, and starts byssusd.
+# mounts consumers, and starts byssusd. It relies on systemd having made
+# every mount shared at boot, as on a real host (not systemd in a container).
 #
 # Usage: sudo BYSSUS_E2E_DISPOSABLE_HOST=1 scripts/test-systemd-host.sh [DEB]
 set -euo pipefail
@@ -35,8 +36,9 @@ wait_for() {
 }
 cleanup() {
     systemctl stop byssusd >/dev/null 2>&1 || true
-    for m in "$root/consumer" "$root/set-consumer" "$root/groups" "$root/orgs"; do
-        umount -R -l "$m" >/dev/null 2>&1 || true
+    # Consumers, and any member mounts left by a failed run (deepest first).
+    findmnt -rn -o TARGET | grep "^$root/" | sort -r | while read -r m; do
+        umount -l "$m" >/dev/null 2>&1 || true
     done
 }
 trap cleanup EXIT
@@ -54,8 +56,10 @@ echo "I am alpha" > "$root/projects/alpha/workspace/README"
 echo "I am beta" > "$root/projects/beta/workspace/README"
 chown byssus:byssus "$root/groups/demo/view"
 chmod 0755 "$root" "$root"/projects "$root"/membership "$root"/membership/demo
-mount --bind "$root/groups" "$root/groups"
-mount --make-shared "$root/groups"
+# No propagation setup: systemd makes every mount shared at boot, so plain
+# directories on it propagate new mounts to rslave consumers.
+[[ "$(findmnt -n -o PROPAGATION -T "$root/groups/demo/view")" == shared ]] ||
+    fail "the mount containing $root is not shared; is this a systemd host?"
 # A simulated container: the view bound read-only with rslave propagation.
 mount --bind "$root/groups/demo/view" "$root/consumer"
 mount -o remount,bind,ro "$root/consumer"
@@ -125,8 +129,6 @@ as_app() { runuser -u "$app" -- "$@"; }
 m="$root/set-membership"
 mkdir -p "$root/orgs" "$root/set-consumer"
 chmod 0755 "$root/orgs"
-mount --bind "$root/orgs" "$root/orgs"
-mount --make-shared "$root/orgs"
 install -d -o "$app" -g "$app" -m 0755 "$root/orgs/acme" "$root/orgs/beta"
 install -d -o "$app" -g "$app" -m 0750 "$m"
 setfacl    -m u:byssus:rx "$m"

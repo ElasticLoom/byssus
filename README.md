@@ -107,8 +107,8 @@ sudo dnf install ./byssus-<version>-1.x86_64.rpm    # Fedora, RHEL
 ```
 
 Packages install the binaries, systemd unit and service user but do not start
-the daemon. Then set up source directories, the propagation anchor and group
-configuration, check with `sudo byssus dry-run`, and start with
+the daemon. Then set up source directories and group configuration, confirm
+the target roots are on a shared mount (the default on systemd hosts), check with `sudo byssus dry-run`, and start with
 `sudo systemctl enable --now byssusd` — see the
 [installation and operations guide](docs/OPERATIONS.md).
 

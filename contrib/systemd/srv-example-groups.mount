@@ -1,19 +1,25 @@
-# Example: make /srv/example/groups a shared propagation anchor at boot.
+# Example: make /srv/example/groups a shared mount at boot.
+#
+# Only needed when the mount containing your target roots is private, for
+# example on a host where it was made private deliberately. On hosts booted
+# with systemd every mount is already shared; check with:
+#   findmnt -o TARGET,PROPAGATION -T /srv/example/groups
 #
 # The unit file name must match the mount point (systemd-escape --path).
 # Install as /etc/systemd/system/srv-example-groups.mount and enable it. Target
 # roots of Byssus groups live beneath this directory.
 
 [Unit]
-Description=Byssus propagation anchor for /srv/example/groups
+Description=Shared mount for Byssus views beneath /srv/example/groups
 Before=byssusd.service
 
 [Mount]
 What=/srv/example/groups
 Where=/srv/example/groups
 Type=none
-# "shared" is applied by mount(8) after the bind mount is created.
-Options=bind,shared
+# rbind keeps mounts already beneath the directory; "rshared" is applied by
+# mount(8) after the bind mount is created.
+Options=rbind,rshared
 
 [Install]
 WantedBy=local-fs.target

@@ -647,23 +647,29 @@ bind-mount the view with `rslave` propagation, so each new Byssus mount appears
 inside them, and nothing propagates back.
 
 ```
-Host:       /srv/example/groups                 ← shared mount (propagation anchor)
-            └── research/view                   ← target_root
+Host:       /                                   ← mount containing target_root: shared
+            └── srv/example/groups/research/view  ← target_root (a plain directory)
                 ├── libcurl                     ← Byssus bind mount
                 └── openssl
 Container:  /group                              ← bind of research/view, rslave
 ```
 
-`shared`, `private` and `slave` are properties of mounts, not directories. If
-the target root is an ordinary directory, make an anchor mount once at install
-time:
+`shared`, `private` and `slave` are properties of mounts, not directories; what
+matters is the propagation of the mount that *contains* the target root. The
+target root does not need to be a mount itself. A bind mount of a directory on
+a shared mount (the container's view) joins that mount's propagation, so new
+mounts beneath the target root reach it.
 
-```bash
-mount --bind /srv/example/groups /srv/example/groups
-mount --make-shared /srv/example/groups
-```
-
-(See [OPERATIONS.md](OPERATIONS.md#create-the-propagation-anchor) for making this persistent.)
+On hosts booted with systemd nothing needs to be set up: systemd makes every
+mount shared at boot (it skips this when it runs inside a container). Only when
+the containing mount is private — hosts without systemd, systemd running in a
+container, or a mount deliberately made private — does the deployer need a shared mount at or
+above the target root (see
+[OPERATIONS.md](OPERATIONS.md#check-mount-propagation)). Byssus does not change
+the propagation of mounts it did not create: doing so would mean placing a new
+mount over the target root that outlives the daemon, containers attached
+before it would silently miss every member, and it would override a choice the
+host's administrator made. Instead it checks propagation and reports it.
 
 ### Startup check
 
@@ -740,13 +746,13 @@ format and every `op=` value are documented in
 
 ## Deployment
 
-Installation, permissions, the propagation anchor, the systemd unit, container
+Installation, permissions, mount propagation, the systemd unit, container
 configuration and troubleshooting are covered in
 [OPERATIONS.md](OPERATIONS.md). Deployment artifacts ship in `contrib/`:
 
 - `contrib/systemd/byssusd.service` — hardened unit without mount namespacing;
-- `contrib/systemd/srv-example-groups.mount` — example shared propagation
-  anchor;
+- `contrib/systemd/srv-example-groups.mount` — example shared mount, for hosts
+  where the target root's mount is private;
 - `contrib/sysusers.d/byssus.conf` — service user.
 
 Example configuration is in `examples/`.

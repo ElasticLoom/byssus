@@ -14,7 +14,7 @@ for attaching containers and integrating an application, see
   - [From a package](#from-a-package)
   - [From source](#from-source)
 - [Lay out directories and permissions](#lay-out-directories-and-permissions)
-- [Create the propagation anchor](#create-the-propagation-anchor)
+- [Check mount propagation](#check-mount-propagation)
 - [Configure groups](#configure-groups)
 - [Check the deployment](#check-the-deployment)
 - [Run under systemd](#run-under-systemd)
@@ -166,13 +166,26 @@ grant the ACL explicitly as part of creating a project.
 Parents created for nested targets (for example `target = "{name}/ro"`) are
 made with mode `0755`.
 
-## Create the propagation anchor
+## Check mount propagation
 
-Consumers see new mounts through **shared** mount propagation. The target root
-must lie on a mount marked shared. If it is an ordinary directory, bind-mount
-an ancestor onto itself and mark it shared.
+Consumers see new mounts through **shared** mount propagation: the mount that
+contains each target root must be shared. The target root itself can be an
+ordinary directory.
 
-Persistently, with the example systemd mount unit:
+On hosts booted with systemd this is already the case — systemd makes every
+mount shared at boot — and there is nothing to set up. (systemd skips this when
+it runs inside a container.) Check it:
+
+```bash
+findmnt -o TARGET,PROPAGATION -T /srv/example/groups/research/view   # expect: shared
+```
+
+`byssus check` and `byssus dry-run` report the same (`propagation = shared`),
+and `byssusd` checks it at startup and on reload.
+
+Only if it reports `private` (for example on a host without systemd, inside a
+container, or where a mount was made private deliberately), create a shared mount at or above the
+target roots, and make it persistent. With the example systemd mount unit:
 
 ```bash
 install -m 0644 contrib/systemd/srv-example-groups.mount /etc/systemd/system/
@@ -184,14 +197,15 @@ systemctl enable --now srv-example-groups.mount
 Or with `/etc/fstab`:
 
 ```
-/srv/example/groups  /srv/example/groups  none  bind,shared  0 0
+/srv/example/groups  /srv/example/groups  none  rbind,rshared  0 0
 ```
 
-Check it:
+`rbind` keeps any mounts already beneath the directory visible. Create it before
+starting containers that bind views beneath it: a container attached earlier
+holds a view from beneath the old mount and does not see new members.
 
-```bash
-findmnt -o TARGET,PROPAGATION /srv/example/groups
-```
+If it reports a `slave` propagation, `byssusd` is running in its own mount
+namespace; see [Troubleshooting](#troubleshooting).
 
 ## Configure groups
 
@@ -338,7 +352,7 @@ container runtimes start.
 | `op=conflict ... not recorded in state` | Something else is mounted at the member's target. Byssus never touches it. Unmount it or change the target template. |
 | `op=conflict ... not the recorded mount` | Byssus's mount was replaced by another. Resolve manually; Byssus will re-create its mount once the target is free. |
 | `op=conflict ... several members resolve to the same target` | Two members (possibly in different groups) map to one target. Adjust templates. |
-| `private (mounts will not reach containers via rslave)` | The target root is not on a shared mount. See [Create the propagation anchor](#create-the-propagation-anchor). |
+| `private (mounts will not reach containers via rslave)` | The mount containing the target root is private. See [Check mount propagation](#check-mount-propagation). |
 | `are slave mounts ... refusing to start` | `byssusd` is running in its own mount namespace — usually a systemd option such as `ProtectSystem=`, `PrivateTmp=`, `PrivateNetwork=` or `PrivateIPC=`. Remove it. |
 | `op=degrade` | A membership directory, or a group set's `membership_root` (`group=<set>/*`), was moved, deleted or unmounted. Mounts are kept. Restore the directory and `systemctl reload byssusd`. |
 | `op=reject group=<set>/* ...` | An entry in a group set's directory tree is not a directory with a valid name. Rename or remove it. |
@@ -366,8 +380,8 @@ container runtimes start.
    systemctl disable --now byssusd
    ```
 
-3. Remove the binaries, unit, configuration, `/var/lib/byssus` and the
-   propagation anchor as desired.
+3. Remove the binaries, unit, configuration, `/var/lib/byssus` and any shared
+   mount you created for propagation, as desired.
 
 Stopping `byssusd` without step 1 leaves its mounts in place until they are
 unmounted manually or the host reboots.

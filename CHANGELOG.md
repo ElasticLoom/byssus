@@ -33,7 +33,7 @@ and this project adheres to
   a service user, locked securebits and `no_new_privs`.
 - TOML configuration with drop-in fragments and ownership checks; versioned,
   atomically written state file.
-- Hardened systemd unit, propagation anchor example, sysusers configuration,
+- Hardened systemd unit, shared mount example for hosts without shared propagation, sysusers configuration,
   example configuration, operations guide and design document.
 - `.deb` and `.rpm` packages for `x86_64` and `aarch64`, tested by installing,
   upgrading and removing them in containers and by running the packaged unit
