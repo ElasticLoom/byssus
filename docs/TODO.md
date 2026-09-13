@@ -20,7 +20,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Lint configuration (rustc + clippy pedantic, unsafe hygiene lints)
 - [x] `rustfmt.toml`, `.gitignore`, `.editorconfig`
 - [x] `cargo-deny` configuration (licenses, advisories, bans, sources)
-- [x] GitHub Actions CI: fmt, clippy, tests, docs, MSRV, musl builds (x86_64 + aarch64), cargo-deny
+- [x] GitHub Actions CI: fmt, clippy, tests, integration tests, docs, MSRV, musl builds (x86_64 + aarch64), cargo-deny
 - [x] Dependabot for Cargo and GitHub Actions
 - [x] `cargo publish --dry-run` packaging check in CI
 - [x] Cross-linking of static musl binaries with `rust-lld` (`.cargo/config.toml`)
@@ -119,7 +119,8 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Build provenance / artifact attestation for release archives
 - [x] Smoke-test binaries in CI (aarch64 under qemu-user)
 - [x] Service-user switching tests using subordinate UIDs in the test namespace (`service_user::`), no host root required
-- [ ] Decide on and run integration tests in CI (userns on GitHub runners)
+- [x] Run integration tests in CI (user namespaces on GitHub runners; subordinate IDs required)
+- [ ] Confirm the CI integration job passes on GitHub's runners (first push)
 - [ ] Security review of the full codebase before first release
 - [x] Document the release process in `RELEASING.md`
 - [ ] Make repository public; publish 0.1.0 to crates.io

@@ -49,6 +49,9 @@ skip_args=()
 if unshare --user --map-root-user --map-auto --mount true 2>/dev/null; then
     map_args=(--map-root-user --map-auto)
     export BYSSUS_TEST_SUBIDS=1
+elif [[ "${BYSSUS_REQUIRE_SUBIDS:-0}" == 1 ]]; then
+    echo "error: subordinate UIDs are required (BYSSUS_REQUIRE_SUBIDS=1) but unavailable" >&2
+    exit 1
 else
     echo "warning: subordinate UIDs unavailable; skipping service_user:: tests" >&2
     echo "         (configure /etc/subuid and /etc/subgid for $(id -un) to run them)" >&2

@@ -883,8 +883,8 @@ Example configuration is in `examples/`.
 - Transactional reload (old configuration retained on failure)
 - `dry-run` and `status` formatting
 
-**Integration tests** (need mount privileges; local-only for now, run by
-`scripts/integration-tests.sh`):
+**Integration tests** (run by `scripts/integration-tests.sh`, locally and in
+CI; no host root required):
 
 The harness runs the test binary inside a fresh **user and mount namespace**
 (`unshare --user --map-root-user --mount --propagation private`). Inside it the
@@ -908,8 +908,9 @@ further child mount namespace with `rslave` propagation.
 - Propagation warning (private) and refusal (slave)
 - Read-only, nosuid, nodev, noexec actually enforced
 
-Tests requiring real host root (switching to a real service user) are
-additionally gated and run with `sudo`.
+Service-user switching tests map subordinate UIDs into the namespace
+(`unshare --map-auto`); CI requires them, local runs skip them with a warning
+if `/etc/subuid` is not configured.
 
 ## Limitations
 
@@ -934,7 +935,6 @@ additionally gated and run with `sudo`.
   rejections and last-reconcile time, if a use case emerges.
 - Selective exposure of subdirectories of a source.
 - JSON log output.
-- Running the integration suite in CI.
 - Seccomp filter applied by the daemon itself, in addition to systemd's.
 
 ## Design decisions log

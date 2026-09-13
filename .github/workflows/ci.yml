@@ -57,9 +57,36 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      # Unprivileged unit tests only. Integration tests needing mount privileges
-      # are run locally via scripts/integration-tests.sh (see docs/TODO.md, M6).
+      # Unit tests only; mount tests run in the integration job.
       - run: cargo test --locked --all-features
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # The tests run unprivileged inside a user and mount namespace. sudo is
+      # used only to prepare the runner: allow unprivileged user namespaces
+      # (restricted by AppArmor on Ubuntu 24.04) and provide subordinate IDs so
+      # the service-user tests can run.
+      - name: Prepare runner
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq uidmap
+          user="$(id -un)"
+          grep -q "^${user}:" /etc/subuid || echo "${user}:100000:65536" | sudo tee -a /etc/subuid
+          grep -q "^${user}:" /etc/subgid || echo "${user}:100000:65536" | sudo tee -a /etc/subgid
+      - name: Run integration tests
+        env:
+          BYSSUS_REQUIRE_SUBIDS: "1"
+        run: scripts/integration-tests.sh
 
   docs:
     name: Docs
