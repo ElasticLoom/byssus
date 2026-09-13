@@ -245,6 +245,8 @@ pub fn plan(current: &Credentials, request: &Request) -> Result<PrivilegePlan, P
         }));
     }
 
+    // Changing the bounding set and securebits needs CAP_SETPCAP, which only a
+    // root start has; otherwise NO_NEW_PRIVS below makes the bounding set moot.
     if has_setpcap {
         ops.push(Op::DropBoundingExcept(keep));
         ops.push(Op::SetSecureBits(LOCKED_SECURE_BITS));
