@@ -24,8 +24,8 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Dependabot for Cargo and GitHub Actions
 - [x] `cargo publish --dry-run` packaging check in CI
 - [x] Cross-linking of static musl binaries with `rust-lld` (`.cargo/config.toml`)
-- [ ] Enable GitHub private vulnerability reporting (repository settings; manual)
-- [ ] Branch protection on `main` requiring CI (repository settings; manual)
+- [ ] Enable GitHub private vulnerability reporting (repository settings; only available once the repository is public)
+- [ ] Branch protection on `main` requiring CI (repository settings; GitHub only offers this for private repositories on paid plans, so enable it when the repository is public)
 - [ ] `CODE_OF_CONDUCT.md` (decide on text, e.g. Contributor Covenant)
 - [x] Issue and pull request templates
 - [x] `scripts/playground.sh`: interactive namespace playground
@@ -121,7 +121,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Smoke-test binaries in CI (aarch64 under qemu-user)
 - [x] Service-user switching tests using subordinate UIDs in the test namespace (`service_user::`), no host root required
 - [x] Run integration tests in CI (user namespaces on GitHub runners; subordinate IDs required)
-- [ ] Confirm the CI integration job passes on GitHub's runners (first push)
+- [x] Confirm the CI integration job passes on GitHub's runners (all 44 tests, including `service_user::`, pass on `ubuntu-24.04`)
 - [ ] Security review of the full codebase before first release
 - [x] Document the release process in `RELEASING.md`
 - [ ] Make repository public; publish 0.1.0 to crates.io
