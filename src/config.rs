@@ -362,6 +362,20 @@ pub struct LoadOptions {
     pub trusted_uid: u32,
     /// Whether to check that configured directories exist.
     pub check_paths: bool,
+    /// Hypothetical changes to the drop-in directory, for validating a
+    /// configuration before installing it (`byssus check`).
+    pub fragment_changes: FragmentChanges,
+}
+
+/// Changes to apply on top of the installed drop-in fragments when loading.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FragmentChanges {
+    /// Candidate fragment files. Each is treated as if installed in the
+    /// drop-in directory under its own file name, replacing an installed
+    /// fragment of the same name.
+    pub add: Vec<PathBuf>,
+    /// File names of installed fragments to leave out.
+    pub remove: Vec<String>,
 }
 
 impl Default for LoadOptions {
@@ -374,6 +388,7 @@ impl Default for LoadOptions {
             ownership: OwnershipPolicy::Enforce,
             trusted_uid: 0,
             check_paths: true,
+            fragment_changes: FragmentChanges::default(),
         }
     }
 }
@@ -392,33 +407,68 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
         Err(e) => issues.error(Some(&options.main_file), None, format!("cannot read: {e}")),
     }
 
-    match list_fragments(&options.config_dir) {
-        Ok(Some(paths)) => {
-            for path in paths {
-                match read_file(&path) {
-                    Ok(Some(content)) => sources.push((path, content, false)),
-                    // Vanished between listing and reading.
-                    Ok(None) => {}
-                    Err(e) => issues.error(Some(&path), None, format!("cannot read: {e}")),
-                }
-            }
-        }
+    let changes = &options.fragment_changes;
+    let candidate_names = validate_candidates(changes, &mut issues);
+    let installed = match list_fragments(&options.config_dir) {
+        Ok(Some(paths)) => paths,
         Ok(None) if options.config_dir_required => {
             issues.error(Some(&options.config_dir), None, "directory does not exist");
+            Vec::new()
         }
-        Ok(None) => {}
-        Err(e) => issues.error(
-            Some(&options.config_dir),
-            None,
-            format!("cannot list directory: {e}"),
-        ),
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            issues.error(
+                Some(&options.config_dir),
+                None,
+                format!("cannot list directory: {e}"),
+            );
+            Vec::new()
+        }
+    };
+    for name in &changes.remove {
+        if !installed.iter().any(|p| file_name_of(p) == name.as_str()) {
+            issues.error(
+                Some(&options.config_dir),
+                None,
+                format!("cannot remove '{name}': no such installed fragment"),
+            );
+        }
+    }
+    let mut fragments: Vec<(PathBuf, bool)> = installed
+        .into_iter()
+        .filter(|p| {
+            let name = file_name_of(p);
+            !changes.remove.iter().any(|r| r == name) && !candidate_names.contains(&name.to_owned())
+        })
+        .map(|p| (p, false))
+        .collect();
+    fragments.extend(changes.add.iter().map(|p| (p.clone(), true)));
+    fragments.sort_by(|a, b| file_name_of(&a.0).cmp(file_name_of(&b.0)));
+
+    let mut candidates = Vec::new();
+    for (path, is_candidate) in fragments {
+        match read_file(&path) {
+            Ok(Some(content)) => {
+                if is_candidate {
+                    candidates.push(path.clone());
+                }
+                sources.push((path, content, false));
+            }
+            Ok(None) if is_candidate => issues.error(Some(&path), None, "file does not exist"),
+            // Vanished between listing and reading.
+            Ok(None) => {}
+            Err(e) => issues.error(Some(&path), None, format!("cannot read: {e}")),
+        }
     }
 
     for (path, _, _) in &sources {
-        check_ownership(path, options, &mut issues);
+        // A candidate is not installed yet, so only the file itself can be
+        // checked; its future containing directory is the drop-in directory.
+        let include_parent = !candidates.contains(path);
+        check_ownership(path, options, include_parent, &mut issues);
     }
     if sources.iter().any(|(_, _, main)| !main) {
-        check_ownership(&options.config_dir, options, &mut issues);
+        check_ownership(&options.config_dir, options, true, &mut issues);
     }
 
     let parsed: Vec<(PathBuf, RawFile, bool)> = sources
@@ -514,7 +564,39 @@ fn list_fragments(dir: &Path) -> io::Result<Option<Vec<PathBuf>>> {
     Ok(Some(paths))
 }
 
-fn check_ownership(path: &Path, options: &LoadOptions, issues: &mut Issues) {
+fn file_name_of(path: &Path) -> &str {
+    path.file_name().and_then(|n| n.to_str()).unwrap_or("")
+}
+
+/// Checks candidate fragment names and returns them.
+fn validate_candidates(changes: &FragmentChanges, issues: &mut Issues) -> Vec<String> {
+    let mut names = Vec::new();
+    for path in &changes.add {
+        let name = file_name_of(path);
+        // Must match the daemon's case-sensitive fragment selection exactly.
+        #[allow(clippy::case_sensitive_file_extension_comparisons)]
+        let ignored_by_daemon =
+            name.is_empty() || name.starts_with('.') || !name.ends_with(".toml");
+        if ignored_by_daemon {
+            issues.error(
+                Some(path),
+                None,
+                "a drop-in fragment must be named <name>.toml and must not begin with '.'; otherwise the daemon ignores it",
+            );
+        }
+        if names.iter().any(|n| n == name) {
+            issues.error(
+                Some(path),
+                None,
+                format!("more than one candidate is named '{name}'"),
+            );
+        }
+        names.push(name.to_owned());
+    }
+    names
+}
+
+fn check_ownership(path: &Path, options: &LoadOptions, include_parent: bool, issues: &mut Issues) {
     let severity = match options.ownership {
         OwnershipPolicy::Enforce => Severity::Error,
         OwnershipPolicy::Warn => Severity::Warning,
@@ -535,7 +617,7 @@ fn check_ownership(path: &Path, options: &LoadOptions, issues: &mut Issues) {
         }
     };
     let mut to_check = vec![resolved.clone()];
-    if let Some(parent) = resolved.parent() {
+    if let Some(parent) = resolved.parent().filter(|_| include_parent) {
         to_check.push(parent.to_path_buf());
     }
     for p in to_check {
@@ -1104,6 +1186,7 @@ membership = "/b"
                 ownership: OwnershipPolicy::Enforce,
                 trusted_uid: rustix::process::getuid().as_raw(),
                 check_paths: true,
+                fragment_changes: FragmentChanges::default(),
             }
         }
 
@@ -1202,6 +1285,96 @@ membership = "/b"
             messages(&err)
                 .iter()
                 .any(|m| m.contains("conf.d is group- or world-writable"))
+        );
+    }
+
+    #[test]
+    fn candidate_fragments_add_replace_and_remove() {
+        let fx = Fixture::new();
+        fx.write("etc/byssus.toml", &fx.state_dir_config(), 0o644);
+        fx.write("etc/conf.d/acme.toml", &fx.group("acme"), 0o644);
+        fx.write("etc/conf.d/beta.toml", &fx.group("beta"), 0o644);
+        let staging = fx.dir.path().join("staging");
+        fs::create_dir(&staging).unwrap();
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o777)).unwrap();
+        let write_candidate = |name: &str, content: &str| {
+            let p = staging.join(name);
+            fs::write(&p, content).unwrap();
+            fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+            p
+        };
+        let with = |add: Vec<PathBuf>, remove: Vec<&str>| LoadOptions {
+            fragment_changes: FragmentChanges {
+                add,
+                remove: remove.into_iter().map(str::to_owned).collect(),
+            },
+            ..fx.options()
+        };
+        let group_names = |loaded: &Loaded| {
+            loaded
+                .config
+                .groups
+                .keys()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        };
+
+        // Add a new fragment; a world-writable staging directory is not an
+        // error because it is not where the file will be installed.
+        let gamma = write_candidate("gamma.toml", &fx.group("gamma"));
+        let loaded = load(&with(vec![gamma], vec![])).unwrap();
+        assert_eq!(group_names(&loaded), ["acme", "beta", "gamma"]);
+
+        // Replace an installed fragment of the same name.
+        let acme2 = write_candidate("acme.toml", &fx.group("acme-new"));
+        let loaded = load(&with(vec![acme2], vec![])).unwrap();
+        assert_eq!(group_names(&loaded), ["acme-new", "beta"]);
+
+        // Remove an installed fragment.
+        let loaded = load(&with(vec![], vec!["beta.toml"])).unwrap();
+        assert_eq!(group_names(&loaded), ["acme"]);
+
+        // A candidate that conflicts with an installed group is rejected.
+        let dup = write_candidate("dup.toml", &fx.group("acme"));
+        let err = load(&with(vec![dup], vec![])).unwrap_err();
+        assert!(
+            messages(&err)[0].contains("already defined"),
+            "{:#?}",
+            messages(&err)
+        );
+
+        // Bad candidate names, missing files, unknown removals, invalid content.
+        let hidden = write_candidate(".hidden.toml", &fx.group("h"));
+        let err = load(&with(vec![hidden], vec![])).unwrap_err();
+        assert!(
+            messages(&err)
+                .iter()
+                .any(|m| m.contains("must be named <name>.toml"))
+        );
+        let err = load(&with(vec![staging.join("absent.toml")], vec![])).unwrap_err();
+        assert!(
+            messages(&err)
+                .iter()
+                .any(|m| m.contains("file does not exist"))
+        );
+        let err = load(&with(vec![], vec!["nope.toml"])).unwrap_err();
+        assert!(
+            messages(&err)
+                .iter()
+                .any(|m| m.contains("no such installed fragment"))
+        );
+        let broken = write_candidate("broken.toml", "[groups.x\n");
+        let err = load(&with(vec![broken], vec![])).unwrap_err();
+        assert!(messages(&err).iter().any(|m| m.contains("invalid TOML")));
+
+        // Candidate file permissions still matter.
+        let loose = write_candidate("loose.toml", &fx.group("loose"));
+        fs::set_permissions(&loose, fs::Permissions::from_mode(0o666)).unwrap();
+        let err = load(&with(vec![loose], vec![])).unwrap_err();
+        assert!(
+            messages(&err)
+                .iter()
+                .any(|m| m.contains("file is group- or world-writable"))
         );
     }
 

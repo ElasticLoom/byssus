@@ -404,3 +404,104 @@ fn status_and_dry_run_reports() {
         "{status}"
     );
 }
+
+fn fragment(d: &Deployment, group: &str, membership: &str, view: &str) -> String {
+    let p = |s: &str| d.path(s).display().to_string();
+    format!(
+        "[groups.{group}]\nsource_root = \"{}\"\nsource = \"{{name}}/workspace\"\ntarget_root = \"{}\"\ntarget = \"{{name}}\"\nmembership = \"{}\"\n",
+        p("src"),
+        p(view),
+        p(membership)
+    )
+}
+
+fn write_mode(path: &Path, content: &str, mode: u32) {
+    fs::write(path, content).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[test]
+#[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
+fn check_validates_candidate_fragments_without_installing() {
+    let d = Deployment::new();
+    d.sb.mkdir("staging");
+    d.sb.mkdir("members-acme");
+    d.sb.mkdir("view-acme");
+
+    // A valid new org fragment.
+    let acme = d.path("staging/acme.toml");
+    write_mode(
+        &acme,
+        &fragment(&d, "acme-vigil", "members-acme", "view-acme"),
+        0o644,
+    );
+    let out = d.byssus(&["check", "--add", acme.to_str().unwrap()]);
+    assert_success(&out);
+    let report = text(&out.stdout);
+    assert!(report.contains("group: acme-vigil"), "{report}");
+    assert!(report.contains("result: valid"), "{report}");
+    assert!(
+        !d.path("etc/conf.d/acme.toml").exists(),
+        "check must not install"
+    );
+
+    // JSON output.
+    let out = d.byssus(&["check", "--add", acme.to_str().unwrap(), "--format", "json"]);
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["valid"], true);
+    assert_eq!(json["groups"], serde_json::json!(["acme-vigil", "g"]));
+
+    // A candidate reusing an installed group name is rejected.
+    let dup = d.path("staging/dup.toml");
+    write_mode(&dup, &fragment(&d, "g", "members-acme", "view-acme"), 0o644);
+    let out = d.byssus(&["check", "--add", dup.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stdout).contains("already defined"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert!(text(&out.stdout).contains("result: invalid"));
+
+    // A candidate whose membership directory does not exist is rejected.
+    let missing = d.path("staging/missing.toml");
+    write_mode(
+        &missing,
+        &fragment(&d, "m", "members-nope", "view-acme"),
+        0o644,
+    );
+    let out = d.byssus(&["check", "--add", missing.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stdout).contains("does not exist"),
+        "{}",
+        text(&out.stdout)
+    );
+
+    // Installed fragments can be removed hypothetically.
+    fs::copy(&acme, d.path("etc/conf.d/acme.toml")).unwrap();
+    let out = d.byssus(&["check", "--remove", "acme.toml"]);
+    assert_success(&out);
+    assert!(!text(&out.stdout).contains("acme-vigil"));
+    let out = d.byssus(&["check", "--remove", "nope.toml"]);
+    assert!(!out.status.success());
+}
+
+#[test]
+#[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
+fn check_rejects_slave_only_target_unless_allowed() {
+    let d = Deployment::new();
+    let anchor = d.sb.make_shared_anchor("anchor");
+    fs::remove_dir(d.path("view")).unwrap();
+    d.sb.attach_consumer(&anchor, "view");
+    let out = d.byssus(&["check"]);
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stdout).contains("slave only"),
+        "{}",
+        text(&out.stdout)
+    );
+    let out = d.byssus(&["check", "--allow-slave-namespace"]);
+    assert_success(&out);
+    assert!(text(&out.stdout).contains("warning: group 'g'"));
+}

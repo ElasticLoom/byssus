@@ -40,6 +40,7 @@ impl ConfigSource {
             ownership,
             trusted_uid: 0,
             check_paths: false,
+            fragment_changes: config::FragmentChanges::default(),
         }
     }
 }

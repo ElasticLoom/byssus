@@ -14,8 +14,9 @@ and this project adheres to
   reconciles read-only bind mounts; debounced change handling, periodic
   resync, transactional `SIGHUP` reload, clean shutdown that preserves mounts,
   and degraded handling of lost membership directories.
-- `byssus` CLI: `status`, `dry-run`, `reconcile` and `version`, with text and
-  JSON output.
+- `byssus` CLI: `status`, `dry-run`, `check`, `reconcile` and `version`, with
+  text and JSON output. `check` validates candidate drop-in fragments exactly
+  as a reload would, before they are installed.
 - Descriptor-confined path handling (`openat2` with `RESOLVE_BENEATH`,
   `RESOLVE_NO_SYMLINKS`, `RESOLVE_NO_MAGICLINKS`), non-recursive clones with
   restrictions applied before attachment, mount identity verification via

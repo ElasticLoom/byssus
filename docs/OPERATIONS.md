@@ -223,6 +223,7 @@ is given, which is intended only for development and tests.
 |------|---------|
 | Show members and their mount state | `byssus status` (add `--format json` for tooling) |
 | Validate everything without changes | `sudo byssus dry-run` |
+| Check a configuration change before applying it | `sudo byssus check --add new.toml` |
 | Reload configuration | `systemctl reload byssusd` |
 | Follow logs | `journalctl -u byssusd -f` |
 | One-off reconcile (daemon stopped) | `sudo byssus reconcile --user byssus` |

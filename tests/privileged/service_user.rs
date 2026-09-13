@@ -193,3 +193,25 @@ fn service_user_without_access_reports_permission_problems() {
     assert!(log.contains("Permission denied"), "{log}");
     assert!(!d.visible("locked"));
 }
+
+#[test]
+#[ignore = "requires subordinate UIDs; run scripts/integration-tests.sh"]
+fn check_detects_membership_directory_unreadable_by_service_user() {
+    require_subids();
+    let _user = FakeUser::install();
+    let d = Deployment::new();
+    let content = fs::read_to_string(d.path("etc/byssus.toml"))
+        .unwrap()
+        .replace("[daemon]\n", "[daemon]\nuser = \"byssus\"\n");
+    fs::write(d.path("etc/byssus.toml"), content).unwrap();
+    prepare_for_service_user(&d);
+    assert_success(&d.byssus(&["check"]));
+
+    // Root can read it; the service user cannot.
+    fs::set_permissions(d.path("members"), fs::Permissions::from_mode(0o700)).unwrap();
+    let out = d.byssus(&["check"]);
+    assert!(!out.status.success(), "{}", text(&out.stdout));
+    let report = text(&out.stdout);
+    assert!(report.contains("cannot open membership"), "{report}");
+    assert!(report.contains("Permission denied"), "{report}");
+}

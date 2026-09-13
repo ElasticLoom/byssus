@@ -89,6 +89,36 @@ enum Command {
         #[command(flatten)]
         privileges: PrivilegeArgs,
     },
+    /// Check whether the configuration would be accepted by a reload,
+    /// optionally with drop-in fragments added, replaced or removed, without
+    /// installing anything or signaling the daemon.
+    ///
+    /// Runs the same validation as a SIGHUP reload: parsing, ownership and
+    /// modes, cross-group rules, paths, opening every root and membership
+    /// directory, watches and propagation. When run as root with a service
+    /// user configured, access is checked as that user. Exits 0 if the
+    /// configuration would be accepted, 1 otherwise.
+    Check {
+        /// Candidate drop-in fragment, treated as installed in the drop-in
+        /// directory under its file name (replacing a fragment of that name).
+        /// May be repeated.
+        #[arg(long = "add", value_name = "FILE")]
+        add: Vec<PathBuf>,
+
+        /// File name of an installed drop-in fragment to leave out. May be
+        /// repeated.
+        #[arg(long = "remove", value_name = "NAME")]
+        remove: Vec<String>,
+
+        /// Treat slave-only target roots as acceptable (as byssusd
+        /// --allow-slave-namespace would).
+        #[arg(long)]
+        allow_slave_namespace: bool,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
     /// Print the version.
     Version,
 }
@@ -122,6 +152,17 @@ fn main() -> ExitCode {
             Ok(ExitCode::SUCCESS)
         }
         Command::Status { format } => status(&cli.config.source(), format),
+        Command::Check {
+            add,
+            remove,
+            allow_slave_namespace,
+            format,
+        } => check(
+            &cli.config.source(),
+            config::FragmentChanges { add, remove },
+            allow_slave_namespace,
+            format,
+        ),
         Command::DryRun { format } => dry_run(&cli.config.source(), format),
         Command::Reconcile { privileges } => reconcile_once(&cli.config.source(), &privileges),
     };
@@ -463,4 +504,145 @@ fn reconcile_once(source: &ConfigSource, args: &PrivilegeArgs) -> anyhow::Result
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// Result of `byssus check`.
+#[derive(Debug, serde::Serialize)]
+struct CheckReport {
+    valid: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checked_as_uid: Option<u32>,
+    files: Vec<String>,
+    groups: Vec<String>,
+    errors: Vec<String>,
+    warnings: Vec<String>,
+}
+
+impl CheckReport {
+    fn to_text(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        for file in &self.files {
+            let _ = writeln!(out, "file: {file}");
+        }
+        for group in &self.groups {
+            let _ = writeln!(out, "group: {group}");
+        }
+        for warning in &self.warnings {
+            let _ = writeln!(out, "warning: {warning}");
+        }
+        for error in &self.errors {
+            let _ = writeln!(out, "error: {error}");
+        }
+        let _ = writeln!(
+            out,
+            "result: {}",
+            if self.valid {
+                "valid (a reload would accept this configuration)"
+            } else {
+                "invalid (a reload would keep the previous configuration)"
+            }
+        );
+        out
+    }
+}
+
+fn check(
+    source: &ConfigSource,
+    changes: config::FragmentChanges,
+    allow_slave_namespace: bool,
+    format: Format,
+) -> anyhow::Result<ExitCode> {
+    let mut report = CheckReport {
+        valid: false,
+        checked_as_uid: None,
+        files: vec![],
+        groups: vec![],
+        errors: vec![],
+        warnings: vec![],
+    };
+    let finish = |mut report: CheckReport| -> anyhow::Result<ExitCode> {
+        report.valid = report.errors.is_empty();
+        print_report(format, || report.to_text(), &report)?;
+        Ok(if report.valid {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        })
+    };
+
+    let options = config::LoadOptions {
+        fragment_changes: changes,
+        ..source.options(OwnershipPolicy::Enforce)
+    };
+    let loaded = match config::load(&options) {
+        Ok(loaded) => loaded,
+        Err(e) => {
+            for issue in &e.issues {
+                match issue.severity {
+                    Severity::Error => report.errors.push(issue.to_string()),
+                    Severity::Warning => report.warnings.push(issue.to_string()),
+                }
+            }
+            return finish(report);
+        }
+    };
+    report
+        .warnings
+        .extend(loaded.warnings.iter().map(ToString::to_string));
+    let config = loaded.config;
+    report.files = config
+        .files
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    report.groups = config.groups.keys().map(ToString::to_string).collect();
+
+    // Check access as the daemon would: as the service user when run as root.
+    let plan = app::normalize_privileges(Goal::DropAll, config.daemon.user.as_deref(), true)
+        .context("cannot drop privileges for checking")?;
+    report.checked_as_uid = Some(plan.final_uid);
+
+    for issue in config::check_paths(&config) {
+        match issue.severity {
+            Severity::Error => report.errors.push(issue.to_string()),
+            Severity::Warning => report.warnings.push(issue.to_string()),
+        }
+    }
+    if !report.errors.is_empty() {
+        return finish(report);
+    }
+
+    let mut runtime = match Runtime::open(&config) {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            report.errors.push(e.to_string());
+            return finish(report);
+        }
+    };
+    if let Err(e) = byssus::watcher::Watcher::new(&runtime) {
+        report.errors.push(e.to_string());
+    }
+    let table = MountTable::read_self().context("cannot read /proc/self/mountinfo")?;
+    let targets: Vec<(Name, byssus::config::AbsPath)> = runtime
+        .groups
+        .values()
+        .map(|g| (g.config.name.clone(), g.config.target_root.clone()))
+        .collect();
+    for (name, target_root) in targets {
+        let propagation = match runtime.roots.get(&target_root) {
+            Ok(fd) => probe::check_propagation(fd, &table),
+            Err(e) => PropagationCheck::Unknown(e),
+        };
+        let message = format!(
+            "group '{name}': target root {target_root} is {}",
+            propagation.describe()
+        );
+        match propagation {
+            PropagationCheck::Shared => {}
+            PropagationCheck::SlaveOnly if !allow_slave_namespace => report.errors.push(message),
+            _ => report.warnings.push(message),
+        }
+    }
+    finish(report)
 }

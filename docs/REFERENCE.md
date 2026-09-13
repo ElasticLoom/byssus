@@ -153,7 +153,10 @@ privileges, lock).
 ```
 byssus status    [--config <FILE>] [--config-dir <DIR>] [--format text|json]
 byssus dry-run   [--config <FILE>] [--config-dir <DIR>] [--format text|json]
+byssus check     [--config <FILE>] [--config-dir <DIR>] [--add <FILE>]... [--remove <NAME>]...
+                 [--allow-slave-namespace] [--format text|json]
 byssus reconcile [--config <FILE>] [--config-dir <DIR>] [--user <USER>] [--allow-root]
+                 [--allow-slave-namespace]
 byssus version
 ```
 
@@ -169,6 +172,19 @@ byssus version
   kernel features, `/proc`, propagation, membership files, per-member source
   resolution and permission diagnostics, and the actions a reconcile would
   take. Exit status `0` if no errors (warnings allowed), `1` otherwise.
+- **`check`** — predicts whether a `SIGHUP` reload would accept the
+  configuration, without installing anything or signaling the daemon. With
+  `--add FILE`, a candidate fragment is treated as installed in the drop-in
+  directory under its file name (replacing a fragment of the same name); with
+  `--remove NAME`, an installed fragment is left out. It runs the reload's
+  validation: parsing, ownership and modes (for a candidate, only the file
+  itself; its future directory is the drop-in directory), cross-group rules,
+  paths, opening every root and membership directory, creating watches, and
+  propagation (slave-only is an error unless `--allow-slave-namespace`). Run
+  as root with `daemon.user` configured, it checks access as that user.
+  Exit status `0` if a reload would accept the configuration, `1` otherwise.
+  It does not compare against the running daemon's configuration, so it
+  cannot report a changed `daemon.state_dir` (which fragments cannot set).
 - **`reconcile`** — one reconcile pass of every group, then exit. Requires
   `CAP_SYS_ADMIN`; refuses to run while the daemon holds the state lock.
 - **`version`** — print the version.
