@@ -1,4 +1,5 @@
 use super::*;
+use crate::name::Name;
 
 const OK_ATTRS: ObservedAttrs = ObservedAttrs {
     read_only: true,
@@ -14,7 +15,7 @@ fn name(s: &str) -> Name {
 
 fn key(group: &str, member: &str) -> RecordKey {
     RecordKey {
-        group: name(group),
+        group: GroupId::parse(group).unwrap(),
         name: name(member),
     }
 }
@@ -90,7 +91,7 @@ fn mounted(id: MountIdentity) -> TargetState {
 struct Scenario {
     desired: Vec<DesiredMount>,
     state: State,
-    frozen: BTreeSet<Name>,
+    frozen: BTreeSet<GroupId>,
     obs: Observations,
 }
 
@@ -116,7 +117,7 @@ impl Scenario {
     }
 
     fn freeze(mut self, group: &str) -> Self {
-        self.frozen.insert(name(group));
+        self.frozen.insert(GroupId::parse(group).unwrap());
         self
     }
 
@@ -643,7 +644,7 @@ fn other_groups_unaffected_by_frozen_group() {
     assert_eq!(p.steps.len(), 1);
     assert!(matches!(
         &p.steps[0].action,
-        Action::Unmount { record, .. } if record.group.as_str() == "live"
+        Action::Unmount { record, .. } if record.group.to_string() == "live"
     ));
 }
 

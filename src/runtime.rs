@@ -6,7 +6,7 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
 use crate::config::{AbsPath, Config, GroupConfig};
 use crate::fsops;
-use crate::name::Name;
+use crate::name::GroupId;
 
 /// Descriptors for one configured group.
 #[derive(Debug)]
@@ -22,7 +22,7 @@ pub struct GroupRuntime {
 #[error("group '{group}': cannot open {field} {path}: {source}")]
 pub struct OpenGroupError {
     /// Group name.
-    pub group: Name,
+    pub group: GroupId,
     /// Which configured directory.
     pub field: &'static str,
     /// Its path.
@@ -64,7 +64,7 @@ impl Roots {
 #[derive(Debug, Default)]
 pub struct Runtime {
     /// Groups by name.
-    pub groups: BTreeMap<Name, GroupRuntime>,
+    pub groups: BTreeMap<GroupId, GroupRuntime>,
     /// Root descriptors.
     pub roots: Roots,
 }

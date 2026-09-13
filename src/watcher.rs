@@ -7,7 +7,7 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
 use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 
-use crate::name::Name;
+use crate::name::GroupId;
 use crate::runtime::Runtime;
 
 /// Events that change membership.
@@ -30,14 +30,14 @@ pub struct Changes {
     /// The kernel event queue overflowed; changes may have been lost.
     pub overflow: bool,
     /// Groups whose membership directory was deleted, moved or unmounted.
-    pub lost: BTreeSet<Name>,
+    pub lost: BTreeSet<GroupId>,
 }
 
 /// An inotify instance watching every configured membership directory.
 #[derive(Debug)]
 pub struct Watcher {
     fd: OwnedFd,
-    groups: BTreeMap<i32, Name>,
+    groups: BTreeMap<i32, GroupId>,
 }
 
 impl Watcher {
@@ -160,7 +160,7 @@ mod tests {
         fs::rename(dir.path().join("members"), dir.path().join("moved")).unwrap();
         let changes = watcher.drain().unwrap();
         assert_eq!(changes.lost.len(), 1);
-        assert_eq!(changes.lost.iter().next().unwrap().as_str(), "g");
+        assert_eq!(changes.lost.iter().next().unwrap().to_string(), "g");
 
         // After the watch is gone, further changes are not attributed.
         fs::write(dir.path().join("moved/x"), "").unwrap();

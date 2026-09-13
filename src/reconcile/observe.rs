@@ -6,7 +6,7 @@ use std::os::fd::AsFd;
 use crate::fsops;
 use crate::membership::Rejection;
 use crate::mount;
-use crate::name::Name;
+use crate::name::{GroupId, Name};
 use crate::reconcile::plan::{DesiredMount, Location, Observations, SourceState, TargetState};
 use crate::runtime::Runtime;
 use crate::state::{RecordKey, State};
@@ -18,14 +18,14 @@ pub enum Note {
     /// A membership entry was rejected.
     Rejected {
         /// Group.
-        group: Name,
+        group: GroupId,
         /// The rejection.
         rejection: Rejection,
     },
     /// A member's name could not be interpolated into a template.
     InterpolationFailed {
         /// Group.
-        group: Name,
+        group: GroupId,
         /// Member.
         name: Name,
         /// `source` or `target`.
@@ -36,13 +36,13 @@ pub enum Note {
     /// The membership directory has been deleted; the group is frozen.
     MembershipDeleted {
         /// Group.
-        group: Name,
+        group: GroupId,
     },
     /// The membership directory could not be read; the group is frozen for
     /// this pass.
     MembershipUnreadable {
         /// Group.
-        group: Name,
+        group: GroupId,
         /// Why.
         error: String,
     },
@@ -56,11 +56,11 @@ pub struct Observed {
     /// Kernel observations.
     pub observations: Observations,
     /// Groups whose records must not be touched this pass.
-    pub frozen: BTreeSet<Name>,
+    pub frozen: BTreeSet<GroupId>,
     /// Valid members per scanned group.
-    pub members: BTreeMap<Name, BTreeSet<Name>>,
+    pub members: BTreeMap<GroupId, BTreeSet<Name>>,
     /// Hidden membership entries ignored per scanned group.
-    pub ignored: BTreeMap<Name, Vec<String>>,
+    pub ignored: BTreeMap<GroupId, Vec<String>>,
     /// Notes to report.
     pub notes: Vec<Note>,
 }
@@ -71,7 +71,7 @@ pub struct Observed {
 pub fn observe(
     runtime: &mut Runtime,
     state: &State,
-    degraded: &BTreeSet<Name>,
+    degraded: &BTreeSet<GroupId>,
     unique_supported: bool,
 ) -> Observed {
     let mut out = Observed {

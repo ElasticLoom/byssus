@@ -18,7 +18,7 @@ use std::fmt;
 
 use crate::config::{AbsPath, MountAttrs};
 use crate::identity::{DevIno, MountIdentity};
-use crate::name::Name;
+use crate::name::GroupId;
 use crate::state::{MountRecord, RecordKey, State};
 
 /// A path beneath a trusted root.
@@ -146,7 +146,7 @@ pub struct PlanInput<'a> {
     /// Current state records.
     pub state: &'a State,
     /// Degraded groups: their records are left untouched.
-    pub frozen_groups: &'a BTreeSet<Name>,
+    pub frozen_groups: &'a BTreeSet<GroupId>,
     /// Kernel observations.
     pub observations: &'a Observations,
 }

@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::name::Name;
+use crate::name::{GroupId, Name};
 use crate::template::Template;
 
 /// Default main configuration file.
@@ -164,8 +164,8 @@ impl Default for DaemonConfig {
 /// A validated group definition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupConfig {
-    /// Group name.
-    pub name: Name,
+    /// Group identifier.
+    pub name: GroupId,
     /// Trusted root beneath which sources are resolved.
     pub source_root: AbsPath,
     /// Source template relative to `source_root`.
@@ -693,7 +693,7 @@ fn assemble(files: Vec<(PathBuf, RawFile, bool)>, issues: &mut Issues) -> Config
             }
             origins.insert(name.clone(), path.clone());
             if let Some(group) = validate_group(name, &raw_group, &path, issues) {
-                config.groups.insert(group.name.clone(), group);
+                config.groups.insert(group.name.group().clone(), group);
             }
         }
     }
@@ -784,7 +784,7 @@ fn validate_group(
             nosymfollow: raw.nosymfollow.unwrap_or(defaults.nosymfollow),
         },
         origin: path.to_path_buf(),
-        name,
+        name: GroupId::statically(name),
     })
 }
 
@@ -803,7 +803,7 @@ fn check_cross_group(config: &Config, issues: &mut Issues) {
                         group.membership, other.target_root, other.name
                     )
                 };
-                issues.error(Some(&group.origin), Some(group.name.as_str()), message);
+                issues.error(Some(&group.origin), Some(&group.name.to_string()), message);
             }
         }
     }
@@ -825,7 +825,8 @@ fn check_paths_exist(config: &Config, issues: &mut Issues) {
             || config.files.first().map(PathBuf::as_path),
             |g| Some(g.origin.as_path()),
         );
-        let name = group.map(|g| g.name.as_str());
+        let name = group.map(|g| g.name.to_string());
+        let name = name.as_deref();
         match std::fs::metadata(path.as_path()) {
             Ok(meta) if meta.is_dir() => {}
             Ok(_) => issues.error(origin, name, format!("{field}: {path} is not a directory")),

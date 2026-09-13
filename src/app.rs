@@ -10,7 +10,7 @@ use jiff::Timestamp;
 use crate::config::{self, Config, Issue, LoadOptions, Loaded, OwnershipPolicy, Severity};
 use crate::lock::{LockError, StateLock};
 use crate::mountinfo::MountTable;
-use crate::name::Name;
+use crate::name::GroupId;
 use crate::privileges::apply::{self, describe_caps};
 use crate::privileges::plan::{self as privplan, Goal, PrivilegePlan, Request, Warning};
 use crate::probe::{self, KernelFeatures, PropagationCheck};
@@ -176,10 +176,10 @@ pub fn verify_config_paths(config: &Config) -> anyhow::Result<()> {
 pub fn check_propagation(
     runtime: &mut Runtime,
     allow_slave: bool,
-) -> anyhow::Result<BTreeMap<Name, PropagationCheck>> {
+) -> anyhow::Result<BTreeMap<GroupId, PropagationCheck>> {
     let table = MountTable::read_self().context("cannot read /proc/self/mountinfo")?;
     let mut results = BTreeMap::new();
-    let groups: Vec<(Name, crate::config::AbsPath)> = runtime
+    let groups: Vec<(GroupId, crate::config::AbsPath)> = runtime
         .groups
         .values()
         .map(|g| (g.config.name.clone(), g.config.target_root.clone()))

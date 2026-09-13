@@ -116,6 +116,83 @@ impl<'de> Deserialize<'de> for Name {
     }
 }
 
+/// Identifies a group: either a statically configured group (`acme`) or a
+/// group discovered in a group set (`research/acme`, set `research`).
+///
+/// Names cannot contain `/`, so the two forms never collide.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GroupId {
+    set: Option<Name>,
+    group: Name,
+}
+
+impl GroupId {
+    /// A statically configured group.
+    #[must_use]
+    pub fn statically(group: Name) -> Self {
+        Self { set: None, group }
+    }
+
+    /// A group discovered in a group set.
+    #[must_use]
+    pub fn in_set(set: Name, group: Name) -> Self {
+        Self {
+            set: Some(set),
+            group,
+        }
+    }
+
+    /// Parses `group` or `set/group`.
+    pub fn parse(s: &str) -> Result<Self, NameError> {
+        match s.split_once('/') {
+            None => Ok(Self::statically(Name::new(s)?)),
+            Some((set, group)) => Ok(Self::in_set(Name::new(set)?, Name::new(group)?)),
+        }
+    }
+
+    /// The set this group belongs to, if any.
+    #[must_use]
+    pub fn set(&self) -> Option<&Name> {
+        self.set.as_ref()
+    }
+
+    /// The group's own name (the directory name for set groups).
+    #[must_use]
+    pub fn group(&self) -> &Name {
+        &self.group
+    }
+}
+
+impl fmt::Display for GroupId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.set {
+            Some(set) => write!(f, "{set}/{}", self.group),
+            None => f.write_str(self.group.as_str()),
+        }
+    }
+}
+
+impl std::str::FromStr for GroupId {
+    type Err = NameError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl Serialize for GroupId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for GroupId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::parse(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Renders arbitrary bytes (such as a rejected file name) safely for logs:
 /// printable ASCII is kept, everything else is escaped.
 #[must_use]
@@ -186,6 +263,33 @@ mod tests {
         let name: Name = serde_json::from_str("\"libcurl\"").unwrap();
         assert_eq!(serde_json::to_string(&name).unwrap(), "\"libcurl\"");
         assert!(serde_json::from_str::<Name>("\"../etc\"").is_err());
+    }
+
+    #[test]
+    fn group_ids() {
+        let s = GroupId::parse("acme").unwrap();
+        assert_eq!(s.set(), None);
+        assert_eq!(s.to_string(), "acme");
+        let g = GroupId::parse("research/acme").unwrap();
+        assert_eq!(g.set().unwrap().as_str(), "research");
+        assert_eq!(g.group().as_str(), "acme");
+        assert_eq!(g.to_string(), "research/acme");
+        assert_ne!(s, g);
+        for bad in [
+            "",
+            "/acme",
+            "research/",
+            "a/b/c",
+            ".x",
+            "research/.x",
+            "a b",
+        ] {
+            assert!(GroupId::parse(bad).is_err(), "{bad}");
+        }
+        let json = serde_json::to_string(&g).unwrap();
+        assert_eq!(json, "\"research/acme\"");
+        assert_eq!(serde_json::from_str::<GroupId>(&json).unwrap(), g);
+        assert!(serde_json::from_str::<GroupId>("\"a/b/c\"").is_err());
     }
 
     #[test]

@@ -9,7 +9,7 @@ pub mod plan;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::name::Name;
+use crate::name::GroupId;
 use crate::runtime::Runtime;
 use crate::state::State;
 
@@ -64,7 +64,7 @@ pub fn run_pass<S: StateSink>(
     runtime: &mut Runtime,
     state: &mut State,
     sink: &S,
-    degraded: &BTreeSet<Name>,
+    degraded: &BTreeSet<GroupId>,
     unique_supported: bool,
     trigger: Trigger,
     notes: &mut NoteLog,
@@ -311,8 +311,8 @@ mod tests {
     use super::*;
     use crate::membership::{EntryKind, RejectReason, Rejection};
 
-    fn name(s: &str) -> Name {
-        Name::new(s).unwrap()
+    fn name(s: &str) -> GroupId {
+        GroupId::parse(s).unwrap()
     }
 
     fn rejected(group: &str, entry: &str, reason: RejectReason) -> Note {

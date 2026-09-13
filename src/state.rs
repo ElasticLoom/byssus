@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{AbsPath, MountAttrs};
 use crate::identity::{DevIno, MountIdentity};
-use crate::name::Name;
+use crate::name::{GroupId, Name};
 
 /// Current state file format version.
 pub const STATE_VERSION: u64 = 1;
@@ -29,7 +29,7 @@ pub const STATE_FILE_MODE: u32 = 0o640;
 #[serde(deny_unknown_fields)]
 pub struct MountRecord {
     /// Group name.
-    pub group: Name,
+    pub group: GroupId,
     /// Member name.
     pub name: Name,
     /// Source root at the time of mounting.
@@ -100,7 +100,7 @@ impl MountRecord {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RecordKey {
     /// Group name.
-    pub group: Name,
+    pub group: GroupId,
     /// Member name.
     pub name: Name,
 }
@@ -416,7 +416,7 @@ mod tests {
 
     fn record(group: &str, name: &str) -> MountRecord {
         MountRecord {
-            group: Name::new(group).unwrap(),
+            group: GroupId::parse(group).unwrap(),
             name: Name::new(name).unwrap(),
             source_root: AbsPath::new("/srv/example/projects").unwrap(),
             source: format!("{name}/workspace"),

@@ -12,7 +12,7 @@ use byssus::app::{self, ConfigSource};
 use byssus::config::{self, Config, OwnershipPolicy, Severity};
 use byssus::logging::{self, LogLevel};
 use byssus::mountinfo::MountTable;
-use byssus::name::Name;
+use byssus::name::GroupId;
 use byssus::privileges::plan::Goal;
 use byssus::probe::{self, Feature, PropagationCheck};
 use byssus::reconcile::{self, Trigger, observe, plan};
@@ -263,7 +263,7 @@ fn status(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
     let (state, ownership_known, mut notes, state_file) = load_state_read_only(&config);
 
     let (mut runtime, open_errors) = Runtime::open_lenient(&config);
-    let degraded: BTreeSet<Name> = open_errors.iter().map(|e| e.group.clone()).collect();
+    let degraded: BTreeSet<GroupId> = open_errors.iter().map(|e| e.group.clone()).collect();
     notes.extend(open_errors.iter().map(ToString::to_string));
 
     let unique = probe::probe_kernel().unique_mount_ids();
@@ -425,7 +425,7 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
     ));
 
     let (mut runtime, open_errors) = Runtime::open_lenient(&config);
-    let mut extra: BTreeMap<Name, (String, Level, Vec<String>)> = BTreeMap::new();
+    let mut extra: BTreeMap<GroupId, (String, Level, Vec<String>)> = BTreeMap::new();
     for e in &open_errors {
         extra.insert(
             e.group.clone(),
@@ -433,7 +433,7 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
         );
     }
     let table = MountTable::read_self().context("cannot read /proc/self/mountinfo")?;
-    let names: Vec<(Name, byssus::config::AbsPath)> = runtime
+    let names: Vec<(GroupId, byssus::config::AbsPath)> = runtime
         .groups
         .values()
         .map(|g| (g.config.name.clone(), g.config.target_root.clone()))
@@ -453,7 +453,7 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
         extra.insert(name, (check.describe(), level, vec![]));
     }
 
-    let degraded: BTreeSet<Name> = open_errors.iter().map(|e| e.group.clone()).collect();
+    let degraded: BTreeSet<GroupId> = open_errors.iter().map(|e| e.group.clone()).collect();
     let observed = observe::observe(&mut runtime, &state, &degraded, features.unique_mount_ids());
     reconcile::NoteLog::default().report(&observed, Trigger::Cli);
     let plan = plan::plan(plan::PlanInput {
@@ -463,7 +463,7 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
         observations: &observed.observations,
     });
     let members = report::member_statuses(&observed, &plan, &state, ownership_known);
-    let groups: Vec<(Name, String)> = config
+    let groups: Vec<(GroupId, String)> = config
         .groups
         .values()
         .map(|g| (g.name.clone(), g.membership.to_string()))
@@ -640,7 +640,7 @@ fn check(
         report.errors.push(e.to_string());
     }
     let table = MountTable::read_self().context("cannot read /proc/self/mountinfo")?;
-    let targets: Vec<(Name, byssus::config::AbsPath)> = runtime
+    let targets: Vec<(GroupId, byssus::config::AbsPath)> = runtime
         .groups
         .values()
         .map(|g| (g.config.name.clone(), g.config.target_root.clone()))

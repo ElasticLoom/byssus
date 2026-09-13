@@ -11,7 +11,7 @@ use rustix::event::{Timespec, epoll};
 
 use crate::app::{self, ConfigSource};
 use crate::config::{Config, OwnershipPolicy};
-use crate::name::Name;
+use crate::name::GroupId;
 use crate::notify::Notifier;
 use crate::privileges::plan::Goal;
 use crate::reconcile::{self, Trigger};
@@ -50,7 +50,7 @@ struct Daemon {
     watcher: Watcher,
     store: StateStore,
     state: State,
-    degraded: BTreeSet<Name>,
+    degraded: BTreeSet<GroupId>,
     unique_supported: bool,
     epoll: std::os::fd::OwnedFd,
     next_resync: Option<Instant>,

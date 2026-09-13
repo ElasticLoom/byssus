@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 use serde::Serialize;
 
-use crate::name::Name;
+use crate::name::GroupId;
 use crate::reconcile::observe::{Note, Observed};
 use crate::reconcile::plan::{Action, ConflictKind, Finding, Plan, SourceState, UnmountReason};
 use crate::state::{RecordKey, State};
@@ -373,16 +373,16 @@ pub struct GroupReport {
 /// the caller per group, with their levels.
 #[must_use]
 pub fn group_reports(
-    groups: &[(Name, String)],
+    groups: &[(GroupId, String)],
     observed: &Observed,
     plan: &Plan,
     statuses: &[MemberStatus],
-    extra: &BTreeMap<Name, (String, Level, Vec<String>)>,
+    extra: &BTreeMap<GroupId, (String, Level, Vec<String>)>,
 ) -> Vec<GroupReport> {
     groups
         .iter()
         .map(|(name, membership_path)| {
-            let in_group = |g: &Name| g == name;
+            let in_group = |g: &GroupId| g == name;
             let members = observed.members.get(name).map_or(0, std::collections::BTreeSet::len);
             let rejected = observed
                 .notes
@@ -414,7 +414,8 @@ pub fn group_reports(
                     _ => {}
                 }
             }
-            let group_statuses = statuses.iter().filter(|s| s.group == name.as_str());
+            let name_text = name.to_string();
+            let group_statuses = statuses.iter().filter(|s| s.group == name_text);
             let existing_mounts = group_statuses
                 .clone()
                 .filter(|s| matches!(s.state, MemberState::Mounted | MemberState::WouldRemount))
@@ -621,6 +622,7 @@ mod tests {
     use super::*;
     use crate::config::{AbsPath, MountAttrs};
     use crate::identity::{DevIno, MountIdentity};
+    use crate::name::Name;
     use crate::reconcile::plan::{
         self, DesiredMount, Location, Observations, PlanInput, TargetState,
     };
@@ -628,7 +630,7 @@ mod tests {
 
     fn key(g: &str, n: &str) -> RecordKey {
         RecordKey {
-            group: Name::new(g).unwrap(),
+            group: GroupId::parse(g).unwrap(),
             name: Name::new(n).unwrap(),
         }
     }
@@ -715,7 +717,7 @@ mod tests {
         obs.targets.insert(gone.target.clone(), mounted(2));
         let mut members = BTreeMap::new();
         members.insert(
-            Name::new("g").unwrap(),
+            GroupId::parse("g").unwrap(),
             ["a", "b", "c", "d"]
                 .iter()
                 .map(|n| Name::new(n).unwrap())
@@ -766,7 +768,7 @@ mod tests {
         let (observed, state) = scenario();
         let p = planned(&observed, &state);
         let statuses = member_statuses(&observed, &p, &state, true);
-        let g = Name::new("g").unwrap();
+        let g = GroupId::parse("g").unwrap();
         let mut extra = BTreeMap::new();
         extra.insert(g.clone(), ("shared".to_owned(), Level::Ok, vec![]));
         let reports = group_reports(&[(g, "/m".into())], &observed, &p, &statuses, &extra);
@@ -787,7 +789,7 @@ mod tests {
         let (observed, state) = scenario();
         let p = planned(&observed, &state);
         let statuses = member_statuses(&observed, &p, &state, true);
-        let g = Name::new("g").unwrap();
+        let g = GroupId::parse("g").unwrap();
         let mut extra = BTreeMap::new();
         extra.insert(g.clone(), ("shared".to_owned(), Level::Ok, vec![]));
         let report = DryRunReport {
@@ -841,7 +843,7 @@ mod tests {
     fn rejected_and_ignored_entries_are_reported() {
         use crate::membership::{EntryKind, RejectReason, Rejection};
         let (mut observed, state) = scenario();
-        let g = Name::new("g").unwrap();
+        let g = GroupId::parse("g").unwrap();
         observed.notes.push(Note::Rejected {
             group: g.clone(),
             rejection: Rejection {
