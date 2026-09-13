@@ -10,9 +10,9 @@ use rustix::process::{Pid, Signal};
 
 use crate::cli::{Deployment, bin, text};
 
-const TIMEOUT: Duration = Duration::from_secs(10);
+pub const TIMEOUT: Duration = Duration::from_secs(10);
 
-fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
+pub fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
     let start = Instant::now();
     while start.elapsed() < TIMEOUT {
         if condition() {
@@ -23,17 +23,21 @@ fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
     panic!("timed out waiting for: {what}");
 }
 
-struct Daemon {
+pub struct Daemon {
     child: Option<Child>,
     log: PathBuf,
 }
 
 impl Daemon {
-    fn start(d: &Deployment, extra: &[&str]) -> Self {
+    pub fn start(d: &Deployment, extra: &[&str]) -> Self {
         Self::start_with_env(d, extra, &[])
     }
 
-    fn start_with_env(d: &Deployment, extra: &[&str], env: &[(&str, &std::path::Path)]) -> Self {
+    pub fn start_with_env(
+        d: &Deployment,
+        extra: &[&str],
+        env: &[(&str, &std::path::Path)],
+    ) -> Self {
         let log = d.path(&format!(
             "daemon-{}.log",
             Instant::now().elapsed().as_nanos()
@@ -55,17 +59,17 @@ impl Daemon {
         }
     }
 
-    fn started(d: &Deployment) -> Self {
+    pub fn started(d: &Deployment) -> Self {
         let daemon = Self::start(d, &[]);
         daemon.wait_log("msg=\"reconcile complete\" trigger=startup");
         daemon
     }
 
-    fn log(&self) -> String {
+    pub fn log(&self) -> String {
         fs::read_to_string(&self.log).unwrap_or_default()
     }
 
-    fn wait_log(&self, needle: &str) {
+    pub fn wait_log(&self, needle: &str) {
         let start = Instant::now();
         while start.elapsed() < TIMEOUT {
             if self.log().contains(needle) {
@@ -76,22 +80,22 @@ impl Daemon {
         panic!("timed out waiting for log {needle:?}\n{}", self.log());
     }
 
-    fn count(&self, needle: &str) -> usize {
+    pub fn count(&self, needle: &str) -> usize {
         self.log().matches(needle).count()
     }
 
-    fn signal(&self, signal: Signal) {
+    pub fn signal(&self, signal: Signal) {
         let pid = self.child.as_ref().unwrap().id();
         let pid = Pid::from_raw(i32::try_from(pid).unwrap()).unwrap();
         rustix::process::kill_process(pid, signal).unwrap();
     }
 
-    fn stop(self) -> i32 {
+    pub fn stop(self) -> i32 {
         self.signal(Signal::TERM);
         self.stop_after_signal()
     }
 
-    fn stop_after_signal(mut self) -> i32 {
+    pub fn stop_after_signal(mut self) -> i32 {
         let mut child = self.child.take().unwrap();
         let start = Instant::now();
         loop {
@@ -107,7 +111,7 @@ impl Daemon {
         }
     }
 
-    fn wait_exit(mut self) -> (i32, String) {
+    pub fn wait_exit(mut self) -> (i32, String) {
         let mut child = self.child.take().unwrap();
         let start = Instant::now();
         loop {

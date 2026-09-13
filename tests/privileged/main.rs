@@ -10,6 +10,7 @@
 mod cli;
 mod common;
 mod daemon;
+mod group_sets;
 mod kernel;
 mod privileges;
 mod service_user;

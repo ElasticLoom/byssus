@@ -53,6 +53,13 @@ impl Deployment {
         }
     }
 
+    /// Replaces the main configuration with `text` (root-owned mode 0644).
+    pub fn write_main_config(&self, text: &str) {
+        let file = self.path("etc/byssus.toml");
+        fs::write(&file, text).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
     pub fn add_source(&self, name: &str) {
         self.sb.write(
             &format!("src/{name}/workspace/README"),
