@@ -22,6 +22,11 @@ pub fn require_test_namespace() {
     );
 }
 
+/// Opens and verifies `/proc`.
+pub fn proc() -> OwnedFd {
+    byssus::probe::verify_procfs(Path::new("/proc")).expect("verify /proc")
+}
+
 /// A private tmpfs sandbox. Everything a test mounts lives beneath it, and
 /// the tmpfs is detached when the sandbox is dropped.
 pub struct Sandbox {

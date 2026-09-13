@@ -1,10 +1,13 @@
 //! Privilege normalization applied to a real (forked) process.
 
-use byssus::privileges::apply::{self, ProcStatus};
+use byssus::privileges::apply::{self, ProcessState};
 use byssus::privileges::plan::{self, Goal, Request};
+use std::os::fd::AsFd;
+
+use rustix::mount::MountPropagationFlags;
 use rustix::thread::CapabilitySet;
 
-use crate::common::require_test_namespace;
+use crate::common::{proc, require_test_namespace};
 
 /// Runs `f` in a forked, single-threaded child and returns its exit status.
 fn in_child(f: fn() -> i32) -> i32 {
@@ -38,7 +41,7 @@ pub fn in_child_with<F: FnOnce() -> i32 + std::panic::UnwindSafe>(f: F) -> i32 {
 fn root_with_allow_root_is_reduced_to_sys_admin() {
     require_test_namespace();
     let code = in_child(|| {
-        let before = ProcStatus::read_self().unwrap();
+        let before = ProcessState::read_self(proc().as_fd()).unwrap();
         assert_eq!(before.uids[1], 0, "expected namespace root");
         let request = Request {
             goal: Goal::KeepSysAdmin,
@@ -46,7 +49,7 @@ fn root_with_allow_root_is_reduced_to_sys_admin() {
             allow_root: true,
         };
         let p = plan::plan(&before.credentials(), &request).unwrap();
-        let after = apply::apply(&p).unwrap();
+        let after = apply::apply(&p, proc().as_fd()).unwrap();
         assert_eq!(after.cap_effective, CapabilitySet::SYS_ADMIN.bits());
         assert_eq!(after.cap_permitted, CapabilitySet::SYS_ADMIN.bits());
         assert_eq!(after.cap_bounding, CapabilitySet::SYS_ADMIN.bits());
@@ -69,14 +72,14 @@ fn root_with_allow_root_is_reduced_to_sys_admin() {
 fn drop_all_leaves_no_capabilities() {
     require_test_namespace();
     let code = in_child(|| {
-        let before = ProcStatus::read_self().unwrap();
+        let before = ProcessState::read_self(proc().as_fd()).unwrap();
         let request = Request {
             goal: Goal::DropAll,
             user: None,
             allow_root: false,
         };
         let p = plan::plan(&before.credentials(), &request).unwrap();
-        let after = apply::apply(&p).unwrap();
+        let after = apply::apply(&p, proc().as_fd()).unwrap();
         assert_eq!(after.cap_effective, 0);
         assert_eq!(after.cap_permitted, 0);
         0
@@ -90,15 +93,46 @@ fn apply_refuses_multithreaded_process() {
     require_test_namespace();
     let code = in_child(|| {
         let _t = std::thread::spawn(|| std::thread::sleep(std::time::Duration::from_secs(5)));
-        let before = ProcStatus::read_self().unwrap();
+        let before = ProcessState::read_self(proc().as_fd()).unwrap();
         let request = Request {
             goal: Goal::DropAll,
             user: None,
             allow_root: false,
         };
         let p = plan::plan(&before.credentials(), &request).unwrap();
-        match apply::apply(&p) {
+        match apply::apply(&p, proc().as_fd()) {
             Err(apply::ApplyError::MultiThreaded(n)) if n > 1 => 0,
+            other => {
+                eprintln!("unexpected: {other:?}");
+                1
+            }
+        }
+    });
+    assert_eq!(code, 0);
+}
+
+#[test]
+#[ignore = "requires a user namespace; run scripts/integration-tests.sh"]
+fn process_state_refuses_a_file_mounted_over_proc_status() {
+    require_test_namespace();
+    let code = in_child(|| {
+        // SAFETY: the child is single-threaded; a private mount namespace
+        // keeps the overmount from outliving it.
+        assert_eq!(unsafe { libc::unshare(libc::CLONE_NEWNS) }, 0, "unshare");
+        rustix::mount::mount_change(
+            "/",
+            MountPropagationFlags::PRIVATE | MountPropagationFlags::REC,
+        )
+        .unwrap();
+        let fake = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(fake.path(), "Threads:\t1\n").unwrap();
+        rustix::mount::mount_bind(fake.path(), "/proc/self/status").unwrap();
+        let by_path = std::fs::read_to_string("/proc/self/status").unwrap();
+        assert_eq!(by_path, "Threads:\t1\n", "overmount not in effect");
+
+        let proc = proc();
+        match ProcessState::read_self(proc.as_fd()) {
+            Err(e) if e.raw_os_error() == Some(libc::EXDEV) => 0,
             other => {
                 eprintln!("unexpected: {other:?}");
                 1

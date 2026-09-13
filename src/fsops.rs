@@ -47,15 +47,23 @@ pub fn open_dir_for_reading(path: &Path) -> io::Result<OwnedFd> {
 /// Resolves a relative directory path beneath `root` as an `O_PATH`
 /// descriptor, refusing symlinks, magic links and escapes.
 pub fn resolve_dir(root: BorrowedFd<'_>, relative: &str) -> io::Result<OwnedFd> {
-    let mut attempts = 0;
-    loop {
-        match rustix::fs::openat2(
+    retry_eagain(|| {
+        rustix::fs::openat2(
             root,
             relative,
             OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
             Mode::empty(),
             CONFINED,
-        ) {
+        )
+    })
+}
+
+/// Runs a scoped `openat2` lookup, retrying a bounded number of times while it
+/// fails with `EAGAIN`.
+pub fn retry_eagain(mut open: impl FnMut() -> rustix::io::Result<OwnedFd>) -> io::Result<OwnedFd> {
+    let mut attempts = 0;
+    loop {
+        match open() {
             Err(rustix::io::Errno::AGAIN) if attempts < EAGAIN_RETRIES => attempts += 1,
             other => return Ok(other?),
         }

@@ -1,8 +1,8 @@
 //! Startup logic shared by `byssusd` and the `byssus` CLI.
 
 use std::collections::BTreeMap;
-use std::os::fd::OwnedFd;
-use std::path::PathBuf;
+use std::os::fd::{AsFd, OwnedFd};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
 use jiff::Timestamp;
@@ -97,8 +97,10 @@ fn normalize(
     allow_root: bool,
     log_warnings: bool,
 ) -> anyhow::Result<PrivilegePlan> {
-    let status = apply::ProcStatus::read_self().context("cannot read /proc/self/status")?;
-    let credentials = status.credentials();
+    let proc = probe::verify_procfs(Path::new("/proc")).context("/proc is not usable")?;
+    let state =
+        apply::ProcessState::read_self(proc.as_fd()).context("cannot read process state")?;
+    let credentials = state.credentials();
     let is_root = credentials.uids.contains(&0);
     let service_user = match user {
         Some(name) => match users::resolve(name) {
@@ -134,7 +136,7 @@ fn normalize(
             ),
         }
     }
-    apply::apply(&plan)?;
+    apply::apply(&plan, proc.as_fd())?;
     tracing::info!(
         msg = "privileges normalized",
         uid = plan.final_uid,
@@ -165,8 +167,7 @@ pub fn check_environment() -> anyhow::Result<Environment> {
             probe::missing_features_hint(probe::seccomp_filter_active())
         );
     }
-    let proc =
-        probe::verify_procfs(std::path::Path::new("/proc")).context("/proc is not usable")?;
+    let proc = probe::verify_procfs(Path::new("/proc")).context("/proc is not usable")?;
     tracing::debug!(
         msg = "kernel features",
         unique_mount_ids = features.unique_mount_ids()

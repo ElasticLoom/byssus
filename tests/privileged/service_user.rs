@@ -2,17 +2,19 @@
 //! into the test namespace (`BYSSUS_TEST_SUBIDS=1`).
 
 use std::fs;
+use std::os::fd::AsFd;
 use std::os::unix::fs::{PermissionsExt, chown};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use byssus::privileges::apply::{self, ProcStatus};
+use byssus::privileges::apply::{self, ProcessState};
 use byssus::privileges::plan::{self, Goal, Request};
 use rustix::mount::{MountFlags, UnmountFlags};
 use rustix::process::Signal;
 use rustix::thread::CapabilitySet;
 
 use crate::cli::{Deployment, assert_success, bin, text};
+use crate::common::proc;
 
 const SERVICE_UID: u32 = 991;
 const SERVICE_GID: u32 = 991;
@@ -84,7 +86,7 @@ fn root_switches_to_service_user_keeping_sys_admin() {
     let mount_point_for_child = mount_point.clone();
 
     let code = crate::privileges::in_child_with(move || {
-        let before = ProcStatus::read_self().unwrap();
+        let before = ProcessState::read_self(proc().as_fd()).unwrap();
         let user = byssus::users::resolve("byssus").unwrap();
         let request = Request {
             goal: Goal::KeepSysAdmin,
@@ -92,9 +94,9 @@ fn root_switches_to_service_user_keeping_sys_admin() {
             allow_root: false,
         };
         let p = plan::plan(&before.credentials(), &request).unwrap();
-        let after = apply::apply(&p).unwrap();
-        assert_eq!(after.uids, [SERVICE_UID; 4]);
-        assert_eq!(after.gids, [SERVICE_GID; 4]);
+        let after = apply::apply(&p, proc().as_fd()).unwrap();
+        assert_eq!(after.uids, [SERVICE_UID; 3]);
+        assert_eq!(after.gids, [SERVICE_GID; 3]);
         assert_eq!(after.cap_effective, CapabilitySet::SYS_ADMIN.bits());
         assert_eq!(after.cap_bounding, CapabilitySet::SYS_ADMIN.bits());
         // CAP_SYS_ADMIN still works after the switch.

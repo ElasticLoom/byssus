@@ -1,19 +1,25 @@
 //! Applying and verifying a privilege-normalization plan.
 
 use std::io;
+use std::os::fd::BorrowedFd;
 
+use rustix::fs::{Mode, OFlags, ResolveFlags};
 use rustix::process::{Gid, Uid};
 use rustix::thread::{CapabilitySet, CapabilitySets};
 
 use super::plan::{Credentials, Op, PrivilegePlan};
+use crate::fsops;
 
-/// Credential state parsed from `/proc/self/status`.
+/// The calling process's credential state.
+///
+/// Credentials come from system calls rather than `/proc/self/status`, so a
+/// file mounted over procfs cannot misreport them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ProcStatus {
-    /// Real, effective, saved and filesystem UIDs.
-    pub uids: [u32; 4],
-    /// Real, effective, saved and filesystem GIDs.
-    pub gids: [u32; 4],
+pub struct ProcessState {
+    /// Real, effective and saved UIDs.
+    pub uids: [u32; 3],
+    /// Real, effective and saved GIDs.
+    pub gids: [u32; 3],
     /// Number of threads.
     pub threads: u32,
     /// `CapInh`.
@@ -30,76 +36,30 @@ pub struct ProcStatus {
     pub no_new_privs: bool,
 }
 
-impl ProcStatus {
-    /// Parses the relevant fields of `/proc/<pid>/status`.
-    pub fn parse(text: &str) -> Result<Self, String> {
-        let mut status = Self::default();
-        let mut seen = 0u16;
-        for line in text.lines() {
-            let Some((key, value)) = line.split_once(':') else {
-                continue;
-            };
-            let value = value.trim();
-            let hex = || u64::from_str_radix(value, 16).map_err(|e| format!("{key}: {e}"));
-            let bit = match key {
-                "Uid" => {
-                    status.uids = four_ids(key, value)?;
-                    1
-                }
-                "Gid" => {
-                    status.gids = four_ids(key, value)?;
-                    2
-                }
-                "Threads" => {
-                    status.threads = value.parse().map_err(|e| format!("{key}: {e}"))?;
-                    4
-                }
-                "CapInh" => {
-                    status.cap_inheritable = hex()?;
-                    8
-                }
-                "CapPrm" => {
-                    status.cap_permitted = hex()?;
-                    16
-                }
-                "CapEff" => {
-                    status.cap_effective = hex()?;
-                    32
-                }
-                "CapBnd" => {
-                    status.cap_bounding = hex()?;
-                    64
-                }
-                "CapAmb" => {
-                    status.cap_ambient = hex()?;
-                    128
-                }
-                "NoNewPrivs" => {
-                    status.no_new_privs = value == "1";
-                    256
-                }
-                _ => 0,
-            };
-            seen |= bit;
-        }
-        if seen == 511 {
-            Ok(status)
-        } else {
-            Err(format!("missing fields in status (seen mask {seen:#b})"))
-        }
-    }
-
-    /// Reads `/proc/self/status`.
-    pub fn read_self() -> io::Result<Self> {
-        let text = std::fs::read_to_string("/proc/self/status")?;
-        Self::parse(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+impl ProcessState {
+    /// Reads the calling process's state. `proc` must be a verified procfs
+    /// descriptor (see [`crate::probe::verify_procfs`]); it is used only for
+    /// the thread count, which no system call reports.
+    pub fn read_self(proc: BorrowedFd<'_>) -> io::Result<Self> {
+        let caps = rustix::thread::capabilities(None)?;
+        Ok(Self {
+            uids: res_ids(libc::getresuid)?,
+            gids: res_ids(libc::getresgid)?,
+            threads: thread_count(proc)?,
+            cap_inheritable: caps.inheritable.bits(),
+            cap_permitted: caps.permitted.bits(),
+            cap_effective: caps.effective.bits(),
+            cap_bounding: read_set(rustix::thread::capability_is_in_bounding_set)?,
+            cap_ambient: read_set(rustix::thread::capability_is_in_ambient_set)?,
+            no_new_privs: rustix::thread::no_new_privs()?,
+        })
     }
 
     /// Current credentials in the form the planner uses.
     #[must_use]
     pub fn credentials(&self) -> Credentials {
         Credentials {
-            uids: [self.uids[0], self.uids[1], self.uids[2]],
+            uids: self.uids,
             caps: CapabilitySets {
                 effective: CapabilitySet::from_bits_retain(self.cap_effective),
                 permitted: CapabilitySet::from_bits_retain(self.cap_permitted),
@@ -109,14 +69,55 @@ impl ProcStatus {
     }
 }
 
-fn four_ids(key: &str, value: &str) -> Result<[u32; 4], String> {
-    let ids: Vec<u32> = value
-        .split_whitespace()
-        .map(str::parse)
-        .collect::<Result<_, _>>()
-        .map_err(|e| format!("{key}: {e}"))?;
-    ids.try_into()
-        .map_err(|v: Vec<u32>| format!("{key}: expected 4 IDs, found {}", v.len()))
+/// Calls `getresuid` or `getresgid`.
+fn res_ids(
+    get: unsafe extern "C" fn(*mut u32, *mut u32, *mut u32) -> libc::c_int,
+) -> io::Result<[u32; 3]> {
+    let mut ids = [0u32; 3];
+    let [real, effective, saved] = &mut ids;
+    // SAFETY: `get` is `getresuid` or `getresgid`, and each pointer is valid
+    // for writing one ID.
+    let ret = unsafe { get(real, effective, saved) };
+    if ret == 0 {
+        Ok(ids)
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Reads a capability set one capability at a time, up to the first
+/// capability the kernel does not know.
+fn read_set(is_set: fn(CapabilitySet) -> rustix::io::Result<bool>) -> io::Result<u64> {
+    let mut bits = 0;
+    for n in 0..64 {
+        match is_set(CapabilitySet::from_bits_retain(1 << n)) {
+            Ok(true) => bits |= 1 << n,
+            Ok(false) => {}
+            Err(rustix::io::Errno::INVAL) if n > 0 => break,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(bits)
+}
+
+/// Reads the thread count from `self/status` beneath the verified procfs
+/// descriptor, without crossing into anything mounted over procfs.
+fn thread_count(proc: BorrowedFd<'_>) -> io::Result<u32> {
+    let resolve = ResolveFlags::BENEATH | ResolveFlags::NO_XDEV | ResolveFlags::NO_MAGICLINKS;
+    let fd = fsops::retry_eagain(|| {
+        rustix::fs::openat2(
+            proc,
+            "self/status",
+            OFlags::RDONLY | OFlags::CLOEXEC,
+            Mode::empty(),
+            resolve,
+        )
+    })?;
+    let text = io::read_to_string(std::fs::File::from(fd))?;
+    text.lines()
+        .find_map(|line| line.strip_prefix("Threads:"))
+        .and_then(|value| value.trim().parse().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no thread count in status"))
 }
 
 /// Applying the plan failed.
@@ -139,12 +140,16 @@ pub enum ApplyError {
     Verification(String),
 }
 
-/// Applies `plan` to the current process and verifies the result.
-pub fn apply(plan: &PrivilegePlan) -> Result<ProcStatus, ApplyError> {
-    let before = ProcStatus::read_self().map_err(|source| ApplyError::Op {
-        op: "read /proc/self/status".into(),
-        source,
-    })?;
+/// Applies `plan` to the current process and verifies the result. `proc` must
+/// be a verified procfs descriptor.
+pub fn apply(plan: &PrivilegePlan, proc: BorrowedFd<'_>) -> Result<ProcessState, ApplyError> {
+    let read_state = || {
+        ProcessState::read_self(proc).map_err(|source| ApplyError::Op {
+            op: "read process state".into(),
+            source,
+        })
+    };
+    let before = read_state()?;
     if before.threads != 1 {
         return Err(ApplyError::MultiThreaded(before.threads));
     }
@@ -154,10 +159,7 @@ pub fn apply(plan: &PrivilegePlan) -> Result<ProcStatus, ApplyError> {
             source,
         })?;
     }
-    let after = ProcStatus::read_self().map_err(|source| ApplyError::Op {
-        op: "read /proc/self/status".into(),
-        source,
-    })?;
+    let after = read_state()?;
     verify(plan, &after).map_err(ApplyError::Verification)?;
     Ok(after)
 }
@@ -187,40 +189,23 @@ fn apply_op(op: &Op) -> io::Result<()> {
 }
 
 fn drop_bounding_except(keep: CapabilitySet) -> io::Result<()> {
-    let last = last_capability()?;
-    for n in 0..=last {
-        let cap = CapabilitySet::from_bits_retain(1u64 << n);
-        if !keep.contains(cap) {
-            rustix::thread::remove_capability_from_bounding_set(cap)?;
-        }
+    let excess = read_set(rustix::thread::capability_is_in_bounding_set)? & !keep.bits();
+    for n in (0..64).filter(|n| excess & (1u64 << n) != 0) {
+        rustix::thread::remove_capability_from_bounding_set(CapabilitySet::from_bits_retain(
+            1u64 << n,
+        ))?;
     }
     Ok(())
 }
 
-fn last_capability() -> io::Result<u32> {
-    let text = std::fs::read_to_string("/proc/sys/kernel/cap_last_cap")?;
-    let last: u32 = text
-        .trim()
-        .parse()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("cap_last_cap: {e}")))?;
-    if last >= 64 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("cap_last_cap {last} out of range"),
-        ));
-    }
-    Ok(last)
-}
-
 /// Checks that `status` matches what `plan` promised.
-pub fn verify(plan: &PrivilegePlan, status: &ProcStatus) -> Result<(), String> {
+pub fn verify(plan: &PrivilegePlan, status: &ProcessState) -> Result<(), String> {
     let mut problems = Vec::new();
     let expected_caps = plan.final_caps.bits();
-    if status.uids[..3].iter().any(|&u| u != plan.final_uid) {
+    if status.uids.iter().any(|&u| u != plan.final_uid) {
         problems.push(format!(
             "UIDs {:?}, expected all {}",
-            &status.uids[..3],
-            plan.final_uid
+            status.uids, plan.final_uid
         ));
     }
     for (label, actual) in [
@@ -326,25 +311,24 @@ pub fn describe_caps(set: CapabilitySet) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::os::fd::AsFd;
+
     use super::*;
     use crate::privileges::plan::{LOCKED_SECURE_BITS, PrivilegePlan};
 
-    const STATUS: &str = "\
-Name:\tbyssusd
-Umask:\t0022
-State:\tS (sleeping)
-Uid:\t991\t991\t991\t991
-Gid:\t991\t991\t991\t991
-Groups:\t500
-Threads:\t1
-CapInh:\t0000000000000000
-CapPrm:\t0000000000200000
-CapEff:\t0000000000200000
-CapBnd:\t0000000000200000
-CapAmb:\t0000000000000000
-NoNewPrivs:\t1
-Seccomp:\t2
-";
+    fn normalized() -> ProcessState {
+        ProcessState {
+            uids: [991; 3],
+            gids: [991; 3],
+            threads: 1,
+            cap_inheritable: 0,
+            cap_permitted: 1 << 21,
+            cap_effective: 1 << 21,
+            cap_bounding: 1 << 21,
+            cap_ambient: 0,
+            no_new_privs: true,
+        }
+    }
 
     fn plan(final_uid: u32, with_bounding: bool) -> PrivilegePlan {
         let mut ops = vec![Op::ClearAmbient];
@@ -361,44 +345,57 @@ Seccomp:\t2
     }
 
     #[test]
-    fn parses_status() {
-        let s = ProcStatus::parse(STATUS).unwrap();
-        assert_eq!(s.uids, [991; 4]);
-        assert_eq!(s.threads, 1);
-        assert_eq!(s.cap_effective, 1 << 21);
-        assert!(s.no_new_privs);
-        let creds = s.credentials();
+    fn credentials_for_planning() {
+        let creds = normalized().credentials();
         assert_eq!(creds.uids, [991; 3]);
+        assert_eq!(creds.caps.effective, CapabilitySet::SYS_ADMIN);
         assert_eq!(creds.caps.permitted, CapabilitySet::SYS_ADMIN);
+        assert_eq!(creds.caps.inheritable, CapabilitySet::empty());
     }
 
+    /// The system-call readings agree with what the kernel reports in
+    /// `/proc/self/status`.
     #[test]
-    fn parse_errors() {
-        assert!(ProcStatus::parse("Uid:\t1\t2\t3\t4\n").is_err());
-        assert!(
-            ProcStatus::parse(&STATUS.replace("Uid:\t991\t991\t991\t991", "Uid:\t991")).is_err()
-        );
-        assert!(
-            ProcStatus::parse(&STATUS.replace("CapEff:\t0000000000200000", "CapEff:\tzz")).is_err()
-        );
-    }
-
-    #[test]
-    fn reads_own_status() {
-        let s = ProcStatus::read_self().unwrap();
+    fn reads_own_state() {
+        let proc = crate::probe::verify_procfs(std::path::Path::new("/proc")).unwrap();
+        let s = ProcessState::read_self(proc.as_fd()).unwrap();
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        let field = |key: &str| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix(key)?.strip_prefix(':'))
+                .unwrap()
+                .trim()
+                .to_owned()
+        };
+        let ids = |key| -> Vec<u32> {
+            field(key)
+                .split_whitespace()
+                .take(3)
+                .map(|id| id.parse().unwrap())
+                .collect()
+        };
+        let hex = |key| u64::from_str_radix(&field(key), 16).unwrap();
+        assert_eq!(s.uids.to_vec(), ids("Uid"));
+        assert_eq!(s.gids.to_vec(), ids("Gid"));
         assert!(s.threads >= 1);
+        assert_eq!(s.cap_inheritable, hex("CapInh"));
+        assert_eq!(s.cap_permitted, hex("CapPrm"));
+        assert_eq!(s.cap_effective, hex("CapEff"));
+        assert_eq!(s.cap_bounding, hex("CapBnd"));
+        assert_eq!(s.cap_ambient, hex("CapAmb"));
+        assert_eq!(s.no_new_privs, field("NoNewPrivs") == "1");
     }
 
     #[test]
     fn verify_accepts_expected_state() {
-        let s = ProcStatus::parse(STATUS).unwrap();
-        assert_eq!(verify(&plan(991, true), &s), Ok(()));
+        assert_eq!(verify(&plan(991, true), &normalized()), Ok(()));
     }
 
     #[test]
     fn verify_reports_each_problem() {
-        let base = ProcStatus::parse(STATUS).unwrap();
-        let check = |mutate: &dyn Fn(&mut ProcStatus), with_bounding: bool, needle: &str| {
+        let base = normalized();
+        let check = |mutate: &dyn Fn(&mut ProcessState), with_bounding: bool, needle: &str| {
             let mut s = base.clone();
             mutate(&mut s);
             let err = verify(&plan(991, with_bounding), &s).unwrap_err();
