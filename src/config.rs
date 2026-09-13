@@ -91,6 +91,14 @@ impl AbsPath {
     }
 }
 
+impl AbsPath {
+    /// This path with a validated name appended as one more component.
+    #[must_use]
+    pub fn join_name(&self, name: &Name) -> Self {
+        Self(self.0.join(name.as_str()))
+    }
+}
+
 impl fmt::Display for AbsPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.display().fmt(f)
@@ -182,13 +190,53 @@ pub struct GroupConfig {
     pub origin: PathBuf,
 }
 
+/// A validated group set: a template for groups discovered as subdirectories
+/// of `membership_root`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupSetConfig {
+    /// Set name.
+    pub name: Name,
+    /// Directory whose subdirectories are the set's groups.
+    pub membership_root: AbsPath,
+    /// Trusted root beneath which sources are resolved.
+    pub source_root: AbsPath,
+    /// Source template; may contain `{group}`.
+    pub source: Template,
+    /// Trusted root beneath which views are mounted.
+    pub target_root: AbsPath,
+    /// Target template; contains `{group}`.
+    pub target: Template,
+    /// Mount attributes for every group in the set.
+    pub attrs: MountAttrs,
+    /// The file that defined this set.
+    pub origin: PathBuf,
+}
+
+impl GroupSetConfig {
+    /// The concrete configuration of the group named `group` in this set.
+    pub fn group(&self, group: &Name) -> Result<GroupConfig, crate::template::InterpolateError> {
+        Ok(GroupConfig {
+            name: GroupId::in_set(self.name.clone(), group.clone()),
+            source_root: self.source_root.clone(),
+            source: self.source.bind_group(group)?,
+            target_root: self.target_root.clone(),
+            target: self.target.bind_group(group)?,
+            membership: self.membership_root.join_name(group),
+            attrs: self.attrs,
+            origin: self.origin.clone(),
+        })
+    }
+}
+
 /// A complete, validated configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
     /// Daemon settings.
     pub daemon: DaemonConfig,
-    /// Groups by name.
+    /// Statically configured groups by name.
     pub groups: BTreeMap<Name, GroupConfig>,
+    /// Group sets by name.
+    pub group_sets: BTreeMap<Name, GroupSetConfig>,
     /// Files that were read, in order.
     pub files: Vec<PathBuf>,
 }
@@ -298,6 +346,21 @@ struct RawFile {
     daemon: Option<RawDaemon>,
     #[serde(default)]
     groups: BTreeMap<String, RawGroup>,
+    #[serde(default)]
+    group_sets: BTreeMap<String, RawGroupSet>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawGroupSet {
+    membership_root: String,
+    source_root: String,
+    source: String,
+    target_root: String,
+    target: String,
+    read_only: Option<bool>,
+    noexec: Option<bool>,
+    nosymfollow: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -655,6 +718,7 @@ fn check_ownership(path: &Path, options: &LoadOptions, include_parent: bool, iss
 fn assemble(files: Vec<(PathBuf, RawFile, bool)>, issues: &mut Issues) -> Config {
     let mut config = Config::default();
     let mut origins: BTreeMap<Name, PathBuf> = BTreeMap::new();
+    let mut set_origins: BTreeMap<Name, PathBuf> = BTreeMap::new();
 
     for (path, raw, is_main) in files {
         config.files.push(path.clone());
@@ -694,6 +758,33 @@ fn assemble(files: Vec<(PathBuf, RawFile, bool)>, issues: &mut Issues) -> Config
             origins.insert(name.clone(), path.clone());
             if let Some(group) = validate_group(name, &raw_group, &path, issues) {
                 config.groups.insert(group.name.group().clone(), group);
+            }
+        }
+
+        for (set_name, raw_set) in raw.group_sets {
+            let label = format!("{set_name}/*");
+            let name = match Name::new(&set_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    issues.error(
+                        Some(&path),
+                        Some(&label),
+                        format!("invalid group set name: {e}"),
+                    );
+                    continue;
+                }
+            };
+            if let Some(first) = set_origins.get(&name) {
+                issues.error(
+                    Some(&path),
+                    Some(&label),
+                    format!("group set is already defined in {}", first.display()),
+                );
+                continue;
+            }
+            set_origins.insert(name.clone(), path.clone());
+            if let Some(set) = validate_group_set(name, &raw_set, &path, issues) {
+                config.group_sets.insert(set.name.clone(), set);
             }
         }
     }
@@ -788,22 +879,117 @@ fn validate_group(
     })
 }
 
+fn validate_group_set(
+    name: Name,
+    raw: &RawGroupSet,
+    path: &Path,
+    issues: &mut Issues,
+) -> Option<GroupSetConfig> {
+    let label = format!("{name}/*");
+    let g = Some(label.as_str());
+    let abs = |issues: &mut Issues, field: &str, value: &str| {
+        AbsPath::new(value)
+            .map_err(|e| issues.error(Some(path), g, format!("{field}: {e}")))
+            .ok()
+    };
+    let membership_root = abs(issues, "membership_root", &raw.membership_root);
+    let source_root = abs(issues, "source_root", &raw.source_root);
+    let target_root = abs(issues, "target_root", &raw.target_root);
+    let template = |issues: &mut Issues, field: &str, value: &str| {
+        Template::parse_for_set(value)
+            .map_err(|e| issues.error(Some(path), g, format!("{field}: {e}")))
+            .ok()
+    };
+    let source = template(issues, "source", &raw.source);
+    let target = template(issues, "target", &raw.target);
+    if let Some(target) = &target {
+        if !target.has_group() {
+            issues.error(
+                Some(path),
+                g,
+                format!("target: {}", crate::template::TemplateError::MissingGroup),
+            );
+            return None;
+        }
+    }
+    let defaults = MountAttrs::default();
+    Some(GroupSetConfig {
+        membership_root: membership_root?,
+        source_root: source_root?,
+        source: source?,
+        target_root: target_root?,
+        target: target?,
+        attrs: MountAttrs {
+            read_only: raw.read_only.unwrap_or(defaults.read_only),
+            noexec: raw.noexec.unwrap_or(defaults.noexec),
+            nosymfollow: raw.nosymfollow.unwrap_or(defaults.nosymfollow),
+        },
+        origin: path.to_path_buf(),
+        name,
+    })
+}
+
+/// A membership location and the target roots that must not contain it.
+struct MembershipArea<'a> {
+    label: String,
+    origin: &'a Path,
+    path: &'a AbsPath,
+    target_root: &'a AbsPath,
+    /// Whether subdirectories of `path` are themselves groups (a set).
+    is_set: bool,
+}
+
 fn check_cross_group(config: &Config, issues: &mut Issues) {
-    for group in config.groups.values() {
-        for other in config.groups.values() {
-            if group.membership.is_at_or_beneath(&other.target_root) {
-                let message = if group.name == other.name {
+    let mut areas: Vec<MembershipArea<'_>> = config
+        .groups
+        .values()
+        .map(|g| MembershipArea {
+            label: g.name.to_string(),
+            origin: &g.origin,
+            path: &g.membership,
+            target_root: &g.target_root,
+            is_set: false,
+        })
+        .collect();
+    areas.extend(config.group_sets.values().map(|set| MembershipArea {
+        label: format!("{}/*", set.name),
+        origin: &set.origin,
+        path: &set.membership_root,
+        target_root: &set.target_root,
+        is_set: true,
+    }));
+
+    for area in &areas {
+        for other in &areas {
+            if area.path.is_at_or_beneath(other.target_root) {
+                let message = if area.label == other.label {
                     format!(
                         "membership directory {} must not be at or beneath target_root {}",
-                        group.membership, other.target_root
+                        area.path, other.target_root
                     )
                 } else {
                     format!(
                         "membership directory {} must not be at or beneath target_root {} of group '{}'",
-                        group.membership, other.target_root, other.name
+                        area.path, other.target_root, other.label
                     )
                 };
-                issues.error(Some(&group.origin), Some(&group.name.to_string()), message);
+                issues.error(Some(area.origin), Some(&area.label), message);
+            }
+            // A set's membership root must not contain, or be contained in,
+            // any other membership location: its subdirectories are groups.
+            if area.label != other.label
+                && other.is_set
+                && (area.path.is_at_or_beneath(other.path)
+                    || other.path.is_at_or_beneath(area.path))
+            {
+                issues.error(
+                    Some(area.origin),
+                    Some(&area.label),
+                    format!(
+                        "membership directory {} overlaps membership_root {} of group set '{}'",
+                        area.path, other.path, other.label
+                    ),
+                );
             }
         }
     }
@@ -820,13 +1006,12 @@ pub fn check_paths(config: &Config) -> Vec<Issue> {
 }
 
 fn check_paths_exist(config: &Config, issues: &mut Issues) {
-    let mut check = |group: Option<&GroupConfig>, field: &str, path: &AbsPath| {
-        let origin = group.map_or_else(
+    let mut check = |owner: Option<(&Path, String)>, field: &str, path: &AbsPath| {
+        let origin = owner.as_ref().map_or_else(
             || config.files.first().map(PathBuf::as_path),
-            |g| Some(g.origin.as_path()),
+            |(o, _)| Some(*o),
         );
-        let name = group.map(|g| g.name.to_string());
-        let name = name.as_deref();
+        let name = owner.as_ref().map(|(_, label)| label.as_str());
         match std::fs::metadata(path.as_path()) {
             Ok(meta) if meta.is_dir() => {}
             Ok(_) => issues.error(origin, name, format!("{field}: {path} is not a directory")),
@@ -841,9 +1026,16 @@ fn check_paths_exist(config: &Config, issues: &mut Issues) {
     };
     check(None, "daemon.state_dir", &config.daemon.state_dir);
     for group in config.groups.values() {
-        check(Some(group), "source_root", &group.source_root);
-        check(Some(group), "target_root", &group.target_root);
-        check(Some(group), "membership", &group.membership);
+        let owner = || Some((group.origin.as_path(), group.name.to_string()));
+        check(owner(), "source_root", &group.source_root);
+        check(owner(), "target_root", &group.target_root);
+        check(owner(), "membership", &group.membership);
+    }
+    for set in config.group_sets.values() {
+        let owner = || Some((set.origin.as_path(), format!("{}/*", set.name)));
+        check(owner(), "membership_root", &set.membership_root);
+        check(owner(), "source_root", &set.source_root);
+        check(owner(), "target_root", &set.target_root);
     }
 }
 
@@ -1005,6 +1197,94 @@ nosymfollow = true
             main_only("[daemon]\nstate_dir = \"relative\"\n"),
             "daemon.state_dir",
         );
+    }
+
+    const SET: &str = r#"
+[group_sets.research]
+membership_root = "/var/lib/platform/membership/research"
+source_root = "/data/orgs"
+source = "{group}/projects/{name}/workspace"
+target_root = "/data/orgs"
+target = "{group}/groups/research/view/{name}"
+"#;
+
+    #[test]
+    fn group_set_parses_and_binds_groups() {
+        let loaded = main_only(SET).unwrap();
+        let set = &loaded.config.group_sets[&Name::new("research").unwrap()];
+        assert_eq!(set.attrs, MountAttrs::default());
+        let group = set.group(&Name::new("acme").unwrap()).unwrap();
+        assert_eq!(group.name.to_string(), "research/acme");
+        assert_eq!(group.source.as_str(), "acme/projects/{name}/workspace");
+        assert_eq!(group.target.as_str(), "acme/groups/research/view/{name}");
+        assert_eq!(
+            group.membership.as_path(),
+            Path::new("/var/lib/platform/membership/research/acme")
+        );
+        assert_eq!(group.source_root, set.source_root);
+    }
+
+    #[test]
+    fn group_set_validation() {
+        assert_error_contains(
+            main_only(&SET.replace("{group}/groups/research/view/{name}", "groups/{name}")),
+            "target: template must contain {group}",
+        );
+        assert_error_contains(
+            main_only(&SET.replace("{group}/projects/{name}/workspace", "{group}/projects")),
+            "source: template must contain {name}",
+        );
+        assert_error_contains(
+            main_only(&GROUP.replace("\"{name}/workspace\"", "\"{group}/{name}\"")),
+            "{group} is only allowed in group set templates",
+        );
+        assert_error_contains(
+            main_only(&SET.replace("[group_sets.research]", "[group_sets.\"a/b\"]")),
+            "invalid group set name",
+        );
+        assert_error_contains(main_only(&format!("{SET}\nextra = 1\n")), "unknown field");
+        assert_error_contains(
+            main_only(&SET.replace(
+                "\"/var/lib/platform/membership/research\"",
+                "\"/data/orgs/membership\"",
+            )),
+            "must not be at or beneath target_root",
+        );
+
+        let err = load_from_strs(&[
+            (Path::new("/a.toml"), SET, false),
+            (Path::new("/b.toml"), SET, false),
+        ])
+        .unwrap_err();
+        assert!(messages(&err)[0].contains("group set is already defined in /a.toml"));
+    }
+
+    #[test]
+    fn group_set_membership_root_must_not_overlap() {
+        // A static group's membership directory inside a set's root would be
+        // mistaken for a group.
+        let static_inside = GROUP.replace(
+            "\"/srv/example/membership/research\"",
+            "\"/var/lib/platform/membership/research/acme\"",
+        );
+        assert_error_contains(
+            main_only(&format!("{SET}{static_inside}")),
+            "overlaps membership_root /var/lib/platform/membership/research of group set 'research/*'",
+        );
+        let other_set = SET
+            .replace("[group_sets.research]", "[group_sets.builds]")
+            .replace("membership/research\"", "membership\"");
+        assert_error_contains(
+            main_only(&format!("{SET}{other_set}")),
+            "overlaps membership_root",
+        );
+
+        // Distinct roots are fine, and a static group may share a set's name.
+        let builds = SET
+            .replace("[group_sets.research]", "[group_sets.builds]")
+            .replace("membership/research\"", "membership/builds\"");
+        let named_like_set = GROUP;
+        assert!(main_only(&format!("{SET}{builds}{named_like_set}")).is_ok());
     }
 
     #[test]

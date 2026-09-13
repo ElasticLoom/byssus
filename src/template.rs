@@ -18,11 +18,13 @@ use crate::name::{MAX_NAME_LEN, Name};
 pub const MAX_PATH_LEN: usize = 4095;
 
 const PLACEHOLDER: &str = "{name}";
+const GROUP_PLACEHOLDER: &str = "{group}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Piece {
     Literal(String),
     Name,
+    Group,
 }
 
 /// A validated path template.
@@ -64,6 +66,12 @@ pub enum TemplateError {
     /// The template does not contain `{name}`.
     #[error("template must contain {{name}}")]
     MissingName,
+    /// `{group}` is used where it is not allowed (outside a group set).
+    #[error("{{group}} is only allowed in group set templates")]
+    GroupNotAllowed,
+    /// A group set's target template does not contain `{group}`.
+    #[error("template must contain {{group}}")]
+    MissingGroup,
     /// A literal component is longer than `NAME_MAX`.
     #[error("template component is {0} bytes long; the maximum is {MAX_NAME_LEN}")]
     ComponentTooLong(usize),
@@ -81,8 +89,19 @@ pub enum InterpolateError {
 }
 
 impl Template {
-    /// Parses and validates a template.
+    /// Parses and validates a template for a statically configured group:
+    /// `{name}` is the only placeholder.
     pub fn parse(raw: &str) -> Result<Self, TemplateError> {
+        Self::parse_inner(raw, false)
+    }
+
+    /// Parses and validates a template for a group set: `{name}` and
+    /// `{group}` are allowed.
+    pub fn parse_for_set(raw: &str) -> Result<Self, TemplateError> {
+        Self::parse_inner(raw, true)
+    }
+
+    fn parse_inner(raw: &str, allow_group: bool) -> Result<Self, TemplateError> {
         if raw.is_empty() {
             return Err(TemplateError::Empty);
         }
@@ -106,9 +125,10 @@ impl Template {
             if component == "." || component == ".." {
                 return Err(TemplateError::DotComponent(component.to_owned()));
             }
-            let pieces = parse_component(component, offset)?;
+            let pieces = parse_component(component, offset, allow_group)?;
             has_name |= pieces.contains(&Piece::Name);
-            if !pieces.contains(&Piece::Name) && component.len() > MAX_NAME_LEN {
+            let has_placeholder = pieces.iter().any(|p| !matches!(p, Piece::Literal(_)));
+            if !has_placeholder && component.len() > MAX_NAME_LEN {
                 return Err(TemplateError::ComponentTooLong(component.len()));
             }
             components.push(pieces);
@@ -139,6 +159,8 @@ impl Template {
                 match piece {
                     Piece::Literal(s) => component.push_str(s),
                     Piece::Name => component.push_str(name.as_str()),
+                    // Bound by `bind_group` before interpolation.
+                    Piece::Group => unreachable!("unbound {{group}} placeholder"),
                 }
             }
             if component.len() > MAX_NAME_LEN {
@@ -155,13 +177,60 @@ impl Template {
         Ok(out)
     }
 
+    /// Whether the template contains `{group}`.
+    #[must_use]
+    pub fn has_group(&self) -> bool {
+        self.components.iter().flatten().any(|p| *p == Piece::Group)
+    }
+
+    /// Substitutes `group` for `{group}`, yielding a template whose only
+    /// placeholder is `{name}`.
+    pub fn bind_group(&self, group: &Name) -> Result<Self, InterpolateError> {
+        let mut components = Vec::with_capacity(self.components.len());
+        let mut raw_parts = Vec::with_capacity(self.components.len());
+        for pieces in &self.components {
+            let mut bound: Vec<Piece> = Vec::new();
+            let mut raw = String::new();
+            for piece in pieces {
+                let text = match piece {
+                    Piece::Name => {
+                        raw.push_str(PLACEHOLDER);
+                        bound.push(Piece::Name);
+                        continue;
+                    }
+                    Piece::Literal(text) => text.as_str(),
+                    Piece::Group => group.as_str(),
+                };
+                raw.push_str(text);
+                if let Some(Piece::Literal(last)) = bound.last_mut() {
+                    last.push_str(text);
+                } else {
+                    bound.push(Piece::Literal(text.to_owned()));
+                }
+            }
+            if !bound.contains(&Piece::Name) && raw.len() > MAX_NAME_LEN {
+                return Err(InterpolateError::ComponentTooLong(raw.len()));
+            }
+            components.push(bound);
+            raw_parts.push(raw);
+        }
+        Ok(Self {
+            raw: raw_parts.join("/"),
+            components,
+        })
+    }
+
     /// Interpolates `name`, returning the relative path joined with `/`.
     pub fn interpolate(&self, name: &Name) -> Result<String, InterpolateError> {
         Ok(self.components(name)?.join("/"))
     }
 }
 
-fn parse_component(component: &str, base_offset: usize) -> Result<Vec<Piece>, TemplateError> {
+fn parse_component(
+    component: &str,
+    base_offset: usize,
+    allow_group: bool,
+) -> Result<Vec<Piece>, TemplateError> {
     let mut pieces = Vec::new();
     let mut literal = String::new();
     let mut rest = component;
@@ -176,6 +245,16 @@ fn parse_component(component: &str, base_offset: usize) -> Result<Vec<Piece>, Te
             pieces.push(Piece::Name);
             rest = after;
             offset += pos + PLACEHOLDER.len();
+        } else if let Some(after) = tail.strip_prefix(GROUP_PLACEHOLDER) {
+            if !allow_group {
+                return Err(TemplateError::GroupNotAllowed);
+            }
+            if !literal.is_empty() {
+                pieces.push(Piece::Literal(std::mem::take(&mut literal)));
+            }
+            pieces.push(Piece::Group);
+            rest = after;
+            offset += pos + GROUP_PLACEHOLDER.len();
         } else {
             let found = if tail.starts_with('{') {
                 tail.find('}').map_or("{", |end| &tail[..=end])
@@ -323,6 +402,53 @@ mod tests {
             t.components(&n),
             Err(InterpolateError::PathTooLong(_))
         ));
+    }
+
+    #[test]
+    fn group_placeholder_only_in_sets() {
+        assert_eq!(
+            Template::parse("{group}/{name}"),
+            Err(TemplateError::GroupNotAllowed)
+        );
+        let t = Template::parse_for_set("{group}/projects/{name}/ws-{group}").unwrap();
+        assert!(t.has_group());
+        assert!(!Template::parse_for_set("{name}").unwrap().has_group());
+        // {group} alone does not satisfy the {name} requirement.
+        assert_eq!(
+            Template::parse_for_set("{group}/x"),
+            Err(TemplateError::MissingName)
+        );
+        assert!(matches!(
+            Template::parse_for_set("{groups}/{name}"),
+            Err(TemplateError::InvalidBrace { .. })
+        ));
+    }
+
+    #[test]
+    fn bind_group_substitutes_and_keeps_name() {
+        let t = Template::parse_for_set("{group}/projects/{name}/ws-{group}").unwrap();
+        let bound = t.bind_group(&name("acme")).unwrap();
+        assert!(!bound.has_group());
+        assert_eq!(bound.as_str(), "acme/projects/{name}/ws-acme");
+        assert_eq!(
+            bound.interpolate(&name("libcurl")).unwrap(),
+            "acme/projects/libcurl/ws-acme"
+        );
+        // Bound templates behave like static templates.
+        assert_eq!(
+            bound,
+            Template::parse("acme/projects/{name}/ws-acme").unwrap()
+        );
+    }
+
+    #[test]
+    fn bind_group_enforces_component_length() {
+        let t = Template::parse_for_set("x{group}/{name}").unwrap();
+        let long = name(&"a".repeat(MAX_NAME_LEN));
+        assert_eq!(
+            t.bind_group(&long),
+            Err(InterpolateError::ComponentTooLong(MAX_NAME_LEN + 1))
+        );
     }
 
     #[test]
