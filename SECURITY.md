@@ -39,8 +39,8 @@ for example:
 
 - exposing files outside a configured source, or at a location outside a
   configured target root;
-- producing a writable, setuid-capable, device-capable or (when configured)
-  executable view;
+- producing a setuid-capable or device-capable view, or a writable or
+  executable one when the group is configured `read_only` or `noexec`;
 - exposing nested mounts from within a source;
 - unmounting or modifying a mount Byssus did not create;
 - retaining capabilities or privileges beyond those documented.

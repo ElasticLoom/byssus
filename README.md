@@ -6,8 +6,8 @@
 > *Byssus creates live filesystem attachments between isolated workspaces.*
 
 Byssus is a small Linux daemon that gives a group of isolated workspaces — for
-example, one container per project — a live, **read-only** view of each
-other's directories. Group membership is declared by creating or deleting empty
+example, one container per project — a live view of each other's
+directories, **read-only** by default. Group membership is declared by creating or deleting empty
 files; the daemon turns that into bind mounts, and mount propagation carries
 them into already-running containers without restarts.
 

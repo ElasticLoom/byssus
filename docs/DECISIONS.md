@@ -8,8 +8,9 @@ Decisions that refined the original design draft, with rationale:
 
 1. **No mount-namespace sandboxing in the systemd unit.** Namespace-creating
    options trap mounts in a slave namespace. Hardening uses non-namespace
-   options, AppArmor, and a runtime self-check that refuses slave
-   propagation.
+   options (capability bounding, a system call filter and others) and a
+   runtime self-check that refuses slave propagation. An AppArmor profile is
+   planned but not yet shipped (see [TODO.md](TODO.md)).
 2. **No DAC-bypassing capabilities.** The daemon runs as an unprivileged user
    with only `CAP_SYS_ADMIN`; deployers grant search-only ACLs on sources.
    A compromise cannot read arbitrary host files.

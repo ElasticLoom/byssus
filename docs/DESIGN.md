@@ -66,8 +66,9 @@ anything.
 2. **Consumers read files, not APIs.** A directory tree is the interface.
 3. **Live membership changes.** Adding or removing a member takes effect in
    already-running containers.
-4. **Isolation.** Consumers outside a group see nothing. Views are read-only,
-   so a consumer cannot modify another member's files through Byssus.
+4. **Isolation.** Consumers outside a group see nothing. Views are read-only
+   by default, so a consumer cannot modify another member's files through
+   Byssus unless the group is explicitly configured read-write.
 5. **Declarative membership.** The presence of a file in a membership
    directory is the desired state. The daemon continuously reconciles the
    kernel's mount table toward it.
@@ -369,7 +370,8 @@ string-constructed path reaches a privileged syscall.
 7. **Record identity**: `statx` on `tree_fd`, which now refers to the attached
    mount, yields its [identity](#mount-identity). Write the state record.
 
-The mount is never visible in a writable or otherwise under-restricted state:
+The mount is never visible less restricted than configured (for a
+`read_only` group, never writable):
 attributes are applied while it is still detached.
 
 ### No recursive submounts
@@ -774,7 +776,8 @@ Example configuration is in `examples/`.
   count; everything else is rejected and logged.
 - **No recursive submounts.** Nested mounts inside a source are never exposed.
 - **Atomic restriction.** Attributes are applied to the detached clone before
-  it is attached; a view is never writable, even briefly.
+  it is attached; a view is never less restricted than configured, even
+  briefly (for a `read_only` group, never writable).
 - **Root-owned configuration**, enforced by ownership and mode checks, reloaded
   only on `SIGHUP` and only if fully valid.
 - **Ownership verification.** Byssus never unmounts or modifies a mount unless
@@ -848,8 +851,9 @@ if `/etc/subuid` is not configured.
 - **Host reboots clear bind mounts.** The daemon recreates them at startup;
   order it before the container runtime.
 - **`CAP_SYS_ADMIN` is broad.** Mitigated by a small, audited code surface,
-  capability normalization, `no_new_privs`, no DAC bypass, a syscall filter,
-  static linking and optional AppArmor confinement.
+  capability normalization, `no_new_privs`, no DAC bypass, a syscall filter
+  (in the shipped systemd unit) and static linking. An AppArmor profile is
+  planned but not yet available.
 - **Mount ID reuse on kernels before 6.8.** Identity additionally requires
   matching device and inode, which makes accidental matches implausible but
   not impossible (for example, a manual re-bind of the same source to the same
