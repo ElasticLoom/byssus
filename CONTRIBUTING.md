@@ -61,8 +61,14 @@ Type `help` inside for the layout, helper commands and things to try.
   deferred, add an entry to `docs/TODO.md` and reference it from a code comment.
 - **Keep `unsafe` minimal.** Prefer `rustix`. Every `unsafe` block needs a
   `// SAFETY:` comment; clippy enforces this.
-- **Keep the design document current.** Behavior changes update
-  `docs/DESIGN.md` in the same pull request.
+- **Keep the documentation current**, in the same pull request, in the right
+  place (see [docs/README.md](docs/README.md)):
+  - mechanisms and security guarantees → `docs/DESIGN.md`;
+  - configuration fields, naming rules, CLI options, exit statuses and log
+    fields → `docs/REFERENCE.md`;
+  - installation and operation → `docs/OPERATIONS.md`;
+  - container attachment and application integration → `docs/INTEGRATION.md`;
+  - a significant design choice and its rationale → `docs/DECISIONS.md`.
 - **Test the decision logic without privileges.** Keep planning pure and cover
   it with unit tests; use integration tests for syscall behavior.
 - **Dependencies** must be actively maintained, use their latest versions, and

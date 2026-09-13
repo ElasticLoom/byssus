@@ -1,5 +1,5 @@
 # Example main configuration: /etc/byssus/byssus.toml
-# Owned by root, mode 0644. See docs/DESIGN.md#configuration.
+# Owned by root, mode 0644. See docs/REFERENCE.md#configuration.
 
 [daemon]
 # Service user to switch to when byssusd is started as root. Not needed when

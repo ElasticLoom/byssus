@@ -2,7 +2,10 @@
 
 This guide covers installing, configuring, running and troubleshooting
 Byssus. The paths below (`/srv/example/...`) are placeholders; substitute your
-own layout. For the design and security contract, see [DESIGN.md](DESIGN.md).
+own layout. For the design and security contract, see [DESIGN.md](DESIGN.md);
+for attaching containers and integrating an application, see
+[INTEGRATION.md](INTEGRATION.md); for every option, see
+[REFERENCE.md](REFERENCE.md).
 
 ## Contents
 
@@ -15,8 +18,6 @@ own layout. For the design and security contract, see [DESIGN.md](DESIGN.md).
 - [Check the deployment](#check-the-deployment)
 - [Run under systemd](#run-under-systemd)
 - [Run without systemd](#run-without-systemd)
-- [Attach containers](#attach-containers)
-- [Integrate an application](#integrate-an-application)
 - [Day-to-day operation](#day-to-day-operation)
 - [Troubleshooting](#troubleshooting)
 - [Removing Byssus](#removing-byssus)
@@ -150,7 +151,7 @@ install -o root -g root -m 0644 examples/conf.d/research.toml /etc/byssus/conf.d
 
 Configuration files and their directories must be owned by root and not group-
 or world-writable; `byssusd` refuses to start otherwise. See
-[DESIGN.md](DESIGN.md#configuration) for every option.
+[REFERENCE.md](REFERENCE.md#configuration) for every option.
 
 ## Check the deployment
 
@@ -215,75 +216,6 @@ Or start it as root with a service user configured (`daemon.user` or
 
 `byssusd` refuses to run as root without a service user unless `--allow-root`
 is given, which is intended only for development and tests.
-
-## Attach containers
-
-Mount the group's view into containers **read-only with `rslave`
-propagation**. New members then appear without restarting the container.
-
-Docker:
-
-```bash
-docker run \
-  --mount type=bind,source=/srv/example/groups/research/view,target=/group,readonly,bind-propagation=rslave \
-  ...
-```
-
-Compose:
-
-```yaml
-services:
-  agent:
-    volumes:
-      - type: bind
-        source: /srv/example/groups/research/view
-        target: /group
-        read_only: true
-        bind:
-          propagation: rslave
-```
-
-Inside the container, `/group/<member>` is each member's source directory,
-read-only, with `nosuid`, `nodev` and (by default) `noexec`. Filesystems
-mounted *inside* a member's source directory are never exposed.
-
-## Integrate an application
-
-Membership is file presence:
-
-```bash
-# Add a member
-touch /srv/example/membership/research/libcurl
-# Remove a member
-rm /srv/example/membership/research/libcurl
-```
-
-Rules:
-
-- Names use only `A–Z a–z 0–9 . _ -`, are at most 255 bytes, and must not
-  start with `.`.
-- A member file must be an **empty regular file**. Symlinks, directories and
-  non-empty files are rejected (and a member whose file becomes non-empty is
-  removed).
-- Files whose names start with `.` are ignored without a warning, so an
-  application can prepare a file under a hidden name and `rename(2)` it into
-  place, and files like `.gitkeep` are harmless.
-- Creating a membership file never fails because of Byssus: the daemon picks
-  changes up asynchronously. Check `byssus status` (or its JSON output) to see
-  whether an entry was accepted or rejected, and why.
-- Changes take effect about 150 ms after the last change in a burst.
-- Adding a member before its source directory exists is fine: it is mounted
-  at the next periodic resync after the source appears (default 60 s), or
-  immediately on any other membership change.
-
-Write access to a membership directory is the authority to change what the
-group sees. Restrict it to the application that manages membership.
-
-To add or remove a whole group, change the configuration and reload:
-
-```bash
-systemctl reload byssusd      # sends SIGHUP
-```
 
 ## Day-to-day operation
 

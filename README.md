@@ -86,11 +86,12 @@ simulated container and `byssusd` running. Type `help` for things to try.
 
 ## Documentation
 
-- [Operations guide](docs/OPERATIONS.md) — installation, permissions, systemd, containers, troubleshooting
-- [Design and security contract](docs/DESIGN.md)
+- [Operations guide](docs/OPERATIONS.md) — install, configure, run, troubleshoot
+- [Integration guide](docs/INTEGRATION.md) — containers and managing membership from an application
+- [Reference](docs/REFERENCE.md) — configuration, naming rules, CLI, log format
+- [Design and security contract](docs/DESIGN.md) and [design decisions](docs/DECISIONS.md)
 - [Milestones and TODO](docs/TODO.md)
-- [Security policy](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Releasing](RELEASING.md)
 
 ## Background
 
