@@ -1,7 +1,7 @@
 //! Privilege normalization.
 //!
-//! [`plan`] decides the credential operations without side effects. Applying
-//! them and verifying the result is part of the kernel layer (see
-//! `docs/TODO.md`, M2).
+//! [`plan`] decides the credential operations without side effects;
+//! [`apply`] performs and verifies them.
 
+pub mod apply;
 pub mod plan;

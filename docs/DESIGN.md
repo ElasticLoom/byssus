@@ -714,8 +714,10 @@ attachment atomic. Other features used:
 | `statx` `STATX_MNT_ID_UNIQUE` | 6.8 | Non-recycled mount IDs (optional; used when present) |
 
 Startup probes call each syscall with deliberately invalid arguments and
-distinguish `ENOSYS` (missing) from other errors (present). A seccomp filter
-returning `EPERM` is reported as such. System call numbers come from the
+distinguish `ENOSYS` (missing) from any other error (present). Some syscalls
+check privileges before arguments, so `EPERM` also means present; a seccomp
+filter returning `EPERM` is therefore indistinguishable at probe time and
+surfaces as an error when the syscall is first used. System call numbers come from the
 `libc`/`rustix` crates, so every Linux architecture those crates support is
 supported.
 

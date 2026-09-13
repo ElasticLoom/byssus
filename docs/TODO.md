@@ -48,24 +48,25 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 
 ## M2 — Kernel layer
 
-- [ ] `sys`: `mount_setattr` raw syscall wrapper (the only mount-related `unsafe`)
-- [ ] `sys`: signal masking + `signalfd` wrapper
-- [ ] `probe`: kernel feature probes (`open_tree`, `move_mount`, `openat2`, `mount_setattr`, `statx` mount fields, `STATX_MNT_ID_UNIQUE`), `ENOSYS` vs `EPERM` reporting
-- [ ] `probe`: `/proc` verification via `fstatfs`
-- [ ] `probe`: propagation check via `statx` mount ID + mountinfo; private → warn, slave-only → error
-- [ ] `probe`: best-effort `/proc/1/ns/mnt` comparison
-- [ ] `fsops`: confined `openat2` resolution helpers
-- [ ] `fsops`: target directory creation walk (`mkdirat` + `openat2`)
-- [ ] `fsops`: membership directory listing via descriptor + `statx(AT_SYMLINK_NOFOLLOW)`
-- [ ] `mount`: identity read (`statx` mnt_id, mnt_id_unique, dev, ino, `STATX_ATTR_MOUNT_ROOT`)
-- [ ] `mount`: create (`open_tree` clone, `mount_setattr`, `move_mount`, identity)
-- [ ] `mount`: attribute verification (`fstatvfs`) and in-place re-apply
-- [ ] `mount`: unmount via pinned descriptor + `/proc/self/fd`, leaf directory removal
-- [ ] `privileges`: apply normalization plan (capget/capset, bounding set, securebits, user switch, ambient clear, `no_new_privs`) and verify the result
-- [ ] `privileges`: resolve service user from `/etc/passwd` and `/etc/group` (static musl has no NSS)
+- [x] `sys`: `mount_setattr` raw syscall wrapper (add-only)
+- [x] `sys`: signal masking + `signalfd` wrapper
+- [x] `probe`: kernel feature probes (`open_tree`, `move_mount`, `openat2`, `mount_setattr`, `statx` mount fields, `STATX_MNT_ID_UNIQUE`); only `ENOSYS` means missing
+- [x] `probe`: `/proc` verification via `fstatfs`
+- [x] `probe`: propagation check via `statx` mount ID + mountinfo; private → warn, slave-only → error
+- [x] `probe`: best-effort `/proc/1/ns/mnt` comparison
+- [x] `fsops`: confined `openat2` resolution helpers
+- [x] `fsops`: target directory creation walk (`mkdirat` + `openat2`)
+- [x] `fsops`: membership directory listing via descriptor + `statx(AT_SYMLINK_NOFOLLOW)`
+- [x] `mount`: identity read (`statx` mnt_id, mnt_id_unique, dev, ino, `STATX_ATTR_MOUNT_ROOT`)
+- [x] `mount`: create (`open_tree` clone, `mount_setattr`, `move_mount`, identity)
+- [x] `mount`: attribute observation (`fstatvfs`) and verified in-place addition of restrictions
+- [x] `mount`: unmount via pinned, verified descriptor + `/proc/self/fd`
+- [x] `fsops`: empty leaf target directory removal
+- [x] `privileges`: apply normalization plan (capget/capset, bounding set, securebits, user switch, ambient clear, `no_new_privs`) and verify the result
+- [x] `privileges`: resolve service user from `/etc/passwd` and `/etc/group` (static musl has no NSS)
 - [ ] `config`: expose path checks separately so they run after privilege normalization (startup step order in DESIGN.md)
-- [ ] `lock`: state directory `flock`
-- [ ] `state`: move state I/O onto a state-directory descriptor (`openat`/`renameat`) once the kernel layer exists; it currently uses path-based `std::fs` within the trusted, `byssus`-owned state directory
+- [x] `lock`: state directory `flock`
+- [x] `state`: state I/O through a state-directory descriptor (`openat`/`renameat`/`fsync`)
 - [ ] Integration test harness: `scripts/integration-tests.sh` running tests in `unshare --user --map-root-user --mount`
 - [ ] Integration tests for each kernel-layer operation (including no-recursive-submount and attribute enforcement)
 

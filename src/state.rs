@@ -3,10 +3,12 @@
 //! See `docs/DESIGN.md`, "State file".
 
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::io::{self, Read, Write};
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::path::PathBuf;
+
+use rustix::fs::{AtFlags, Mode, OFlags};
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -278,23 +280,36 @@ pub enum LoadError {
     },
 }
 
-/// Reads and writes the state file in a state directory.
-#[derive(Debug, Clone)]
+/// Reads and writes the state file through a descriptor for the state
+/// directory.
+#[derive(Debug)]
 pub struct StateStore {
-    dir: PathBuf,
+    dir: OwnedFd,
+    dir_path: PathBuf,
 }
 
 impl StateStore {
-    /// A store for the given state directory.
-    #[must_use]
-    pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+    /// Opens the state directory.
+    pub fn open(dir: impl Into<PathBuf>) -> io::Result<Self> {
+        let dir_path = dir.into();
+        let dir = rustix::fs::open(
+            &dir_path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        Ok(Self { dir, dir_path })
     }
 
-    /// Path of the state file.
+    /// The state directory descriptor (for taking the state lock).
+    #[must_use]
+    pub fn dir_fd(&self) -> BorrowedFd<'_> {
+        self.dir.as_fd()
+    }
+
+    /// Path of the state file, for messages.
     #[must_use]
     pub fn path(&self) -> PathBuf {
-        self.dir.join(STATE_FILE_NAME)
+        self.dir_path.join(STATE_FILE_NAME)
     }
 
     /// Loads state without modifying anything on disk (for read-only
@@ -309,31 +324,47 @@ impl StateStore {
         self.load_inner(Some(now))
     }
 
+    fn io_error(&self, source: impl Into<io::Error>) -> LoadError {
+        LoadError::Io {
+            path: self.path(),
+            source: source.into(),
+        }
+    }
+
     fn load_inner(&self, rename_corrupt_at: Option<Timestamp>) -> Result<LoadOutcome, LoadError> {
-        let path = self.path();
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(LoadOutcome::Missing),
-            Err(source) => return Err(LoadError::Io { path, source }),
+        let fd = match rustix::fs::openat(
+            &self.dir,
+            STATE_FILE_NAME,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(rustix::io::Errno::NOENT) => return Ok(LoadOutcome::Missing),
+            Err(e) => return Err(self.io_error(e)),
         };
+        let mut bytes = Vec::new();
+        File::from(fd)
+            .read_to_end(&mut bytes)
+            .map_err(|e| self.io_error(e))?;
         match State::decode(&bytes) {
             Ok(state) => Ok(LoadOutcome::Loaded(state)),
             Err(source @ DecodeError::UnsupportedVersion(_)) => {
-                Err(LoadError::UnsupportedVersion { path, source })
+                Err(LoadError::UnsupportedVersion {
+                    path: self.path(),
+                    source,
+                })
             }
             Err(DecodeError::Malformed(reason)) => {
                 let preserved_as = match rename_corrupt_at {
                     None => None,
                     Some(now) => {
-                        let aside = self.dir.join(format!(
+                        let aside = format!(
                             "{STATE_FILE_NAME}.corrupt-{}",
                             now.strftime("%Y%m%dT%H%M%S%.fZ")
-                        ));
-                        fs::rename(&path, &aside).map_err(|source| LoadError::Io {
-                            path: path.clone(),
-                            source,
-                        })?;
-                        Some(aside)
+                        );
+                        rustix::fs::renameat(&self.dir, STATE_FILE_NAME, &self.dir, aside.as_str())
+                            .map_err(|e| self.io_error(e))?;
+                        Some(self.dir_path.join(aside))
                     }
                 };
                 Ok(LoadOutcome::Corrupt {
@@ -348,35 +379,37 @@ impl StateStore {
     /// `0640`, `fsync` it, rename it over the state file, then `fsync` the
     /// directory.
     pub fn save(&self, state: &State) -> io::Result<()> {
-        let path = self.path();
-        let tmp = self.dir.join(format!("{STATE_FILE_NAME}.tmp"));
-        let result = write_atomically(&self.dir, &tmp, &path, &state.encode());
+        let result = self.write_atomically(&state.encode());
         if result.is_err() {
-            let _ = fs::remove_file(&tmp);
+            let _ = rustix::fs::unlinkat(&self.dir, TMP_FILE_NAME, AtFlags::empty());
         }
         result
     }
+
+    fn write_atomically(&self, contents: &[u8]) -> io::Result<()> {
+        let fd = rustix::fs::openat(
+            &self.dir,
+            TMP_FILE_NAME,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::from_raw_mode(STATE_FILE_MODE),
+        )?;
+        // The creation mode is filtered by the umask; set it exactly.
+        rustix::fs::fchmod(&fd, Mode::from_raw_mode(STATE_FILE_MODE))?;
+        let mut file = File::from(fd);
+        file.write_all(contents)?;
+        file.sync_all()?;
+        drop(file);
+        rustix::fs::renameat(&self.dir, TMP_FILE_NAME, &self.dir, STATE_FILE_NAME)?;
+        rustix::fs::fsync(&self.dir)?;
+        Ok(())
+    }
 }
 
-fn write_atomically(dir: &Path, tmp: &Path, dest: &Path, contents: &[u8]) -> io::Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(STATE_FILE_MODE)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(tmp)?;
-    // The creation mode is filtered by the umask; set it exactly.
-    file.set_permissions(fs::Permissions::from_mode(STATE_FILE_MODE))?;
-    file.write_all(contents)?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(tmp, dest)?;
-    File::open(dir)?.sync_all()
-}
+const TMP_FILE_NAME: &str = "state.json.tmp";
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::os::unix::fs::MetadataExt;
 
     use super::*;
@@ -535,7 +568,7 @@ mod tests {
     #[test]
     fn store_missing_save_and_load() {
         let dir = tempfile::tempdir().unwrap();
-        let store = StateStore::new(dir.path());
+        let store = StateStore::open(dir.path()).unwrap();
         assert_eq!(store.load_read_only().unwrap(), LoadOutcome::Missing);
 
         let state = sample_state();
@@ -559,7 +592,7 @@ mod tests {
     #[test]
     fn corrupt_file_preserved_only_for_writers() {
         let dir = tempfile::tempdir().unwrap();
-        let store = StateStore::new(dir.path());
+        let store = StateStore::open(dir.path()).unwrap();
         fs::write(store.path(), b"{garbage").unwrap();
 
         let outcome = store.load_read_only().unwrap();
@@ -592,7 +625,7 @@ mod tests {
     #[test]
     fn unsupported_version_is_an_error_and_untouched() {
         let dir = tempfile::tempdir().unwrap();
-        let store = StateStore::new(dir.path());
+        let store = StateStore::open(dir.path()).unwrap();
         fs::write(store.path(), br#"{"version": 9, "mounts": []}"#).unwrap();
         assert!(matches!(
             store.load_for_write(Timestamp::now()),
@@ -604,7 +637,7 @@ mod tests {
     #[test]
     fn save_refuses_symlinked_temp_file() {
         let dir = tempfile::tempdir().unwrap();
-        let store = StateStore::new(dir.path());
+        let store = StateStore::open(dir.path()).unwrap();
         let victim = dir.path().join("victim");
         fs::write(&victim, b"original").unwrap();
         std::os::unix::fs::symlink(&victim, dir.path().join("state.json.tmp")).unwrap();
@@ -613,9 +646,19 @@ mod tests {
     }
 
     #[test]
+    fn symlinked_state_file_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = StateStore::open(dir.path()).unwrap();
+        let elsewhere = dir.path().join("elsewhere.json");
+        fs::write(&elsewhere, sample_state().encode()).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, store.path()).unwrap();
+        assert!(matches!(store.load_read_only(), Err(LoadError::Io { .. })));
+    }
+
+    #[test]
     fn unreadable_file_is_io_error() {
         let dir = tempfile::tempdir().unwrap();
-        let store = StateStore::new(dir.path());
+        let store = StateStore::open(dir.path()).unwrap();
         fs::create_dir(store.path()).unwrap();
         assert!(matches!(store.load_read_only(), Err(LoadError::Io { .. })));
     }
