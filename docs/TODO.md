@@ -128,7 +128,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 
 ## Deferred / future (not scheduled)
 
-- [ ] Daemon-written status snapshot `/run/byssus/status.json` (only if a use case appears)
+- [ ] Daemon-written status snapshot `/run/byssus/status.json` (only if a use case appears; would also let integrations confirm that the latest reload was accepted without reading logs)
 - [ ] JSON log format
 - [ ] Selective exposure of source subdirectories
 - [ ] Daemon-applied seccomp filter
