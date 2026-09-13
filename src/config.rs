@@ -7,11 +7,12 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io;
+use std::io::{self, Read as _};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use rustix::fs::{Mode, OFlags};
 use serde::Deserialize;
 
 use crate::name::{GroupId, Name};
@@ -469,7 +470,7 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     let mut issues = Issues::default();
     let mut sources: Vec<(PathBuf, String, bool)> = Vec::new();
 
-    match read_file(&options.main_file) {
+    match read_checked(&options.main_file, options, true, &mut issues) {
         Ok(Some(content)) => sources.push((options.main_file.clone(), content, true)),
         Ok(None) if options.main_file_required => {
             issues.error(Some(&options.main_file), None, "file does not exist");
@@ -516,15 +517,11 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
     fragments.extend(changes.add.iter().map(|p| (p.clone(), true)));
     fragments.sort_by(|a, b| file_name_of(&a.0).cmp(file_name_of(&b.0)));
 
-    let mut candidates = Vec::new();
     for (path, is_candidate) in fragments {
-        match read_file(&path) {
-            Ok(Some(content)) => {
-                if is_candidate {
-                    candidates.push(path.clone());
-                }
-                sources.push((path, content, false));
-            }
+        // A candidate is not installed yet, so only the file itself can be
+        // checked; its future containing directory is the drop-in directory.
+        match read_checked(&path, options, !is_candidate, &mut issues) {
+            Ok(Some(content)) => sources.push((path, content, false)),
             Ok(None) if is_candidate => issues.error(Some(&path), None, "file does not exist"),
             // Vanished between listing and reading.
             Ok(None) => {}
@@ -532,12 +529,6 @@ pub fn load(options: &LoadOptions) -> Result<Loaded, LoadError> {
         }
     }
 
-    for (path, _, _) in &sources {
-        // A candidate is not installed yet, so only the file itself can be
-        // checked; its future containing directory is the drop-in directory.
-        let include_parent = !candidates.contains(path);
-        check_ownership(path, options, include_parent, &mut issues);
-    }
     if sources.iter().any(|(_, _, main)| !main) {
         check_ownership(&options.config_dir, options, true, &mut issues);
     }
@@ -606,12 +597,54 @@ pub fn load_from_strs(documents: &[(&Path, &str, bool)]) -> Result<Loaded, LoadE
     }
 }
 
-fn read_file(path: &Path) -> io::Result<Option<String>> {
-    match std::fs::read_to_string(path) {
-        Ok(s) => Ok(Some(s)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e),
+/// Reads a configuration file, checking the ownership and mode of the file
+/// and, if `include_parent`, of the directory that actually contains it.
+///
+/// Symlinks in `path` are followed, but the checks and the read use the same
+/// descriptors, so neither can be swapped for another file in between.
+fn read_checked(
+    path: &Path,
+    options: &LoadOptions,
+    include_parent: bool,
+    issues: &mut Issues,
+) -> io::Result<Option<String>> {
+    let resolved = match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let (Some(parent), Some(file_name)) = (resolved.parent(), resolved.file_name()) else {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a file"));
+    };
+    let dir = rustix::fs::open(
+        parent,
+        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    // Non-blocking, so a FIFO cannot stall the open or the read.
+    let flags =
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC;
+    let mut file = match rustix::fs::openat(&dir, file_name, flags, Mode::empty()) {
+        Ok(fd) => std::fs::File::from(fd),
+        Err(rustix::io::Errno::NOENT) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
     }
+    check_owner_and_mode(path, options, "file", &meta, issues);
+    if include_parent {
+        let dir_meta = std::fs::File::from(dir).metadata()?;
+        let what = format!("containing directory {}", parent.display());
+        check_owner_and_mode(path, options, &what, &dir_meta, issues);
+    }
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    Ok(Some(content))
 }
 
 fn list_fragments(dir: &Path) -> io::Result<Option<Vec<PathBuf>>> {
@@ -698,31 +731,7 @@ fn check_ownership(path: &Path, options: &LoadOptions, include_parent: bool, iss
             format!("containing directory {}", p.display())
         };
         match std::fs::metadata(&p) {
-            Ok(meta) => {
-                if meta.uid() != options.trusted_uid {
-                    issues.push(
-                        severity,
-                        Some(path),
-                        None,
-                        format!(
-                            "{what} is owned by uid {}, expected uid {}",
-                            meta.uid(),
-                            options.trusted_uid
-                        ),
-                    );
-                }
-                if meta.mode() & 0o022 != 0 {
-                    issues.push(
-                        severity,
-                        Some(path),
-                        None,
-                        format!(
-                            "{what} is group- or world-writable (mode {:04o})",
-                            meta.mode() & 0o7777
-                        ),
-                    );
-                }
-            }
+            Ok(meta) => check_owner_and_mode(path, options, &what, &meta, issues),
             Err(e) => issues.push(
                 severity,
                 Some(path),
@@ -730,6 +739,42 @@ fn check_ownership(path: &Path, options: &LoadOptions, include_parent: bool, iss
                 format!("cannot stat {what}: {e}"),
             ),
         }
+    }
+}
+
+fn check_owner_and_mode(
+    path: &Path,
+    options: &LoadOptions,
+    what: &str,
+    meta: &std::fs::Metadata,
+    issues: &mut Issues,
+) {
+    let severity = match options.ownership {
+        OwnershipPolicy::Enforce => Severity::Error,
+        OwnershipPolicy::Warn => Severity::Warning,
+    };
+    if meta.uid() != options.trusted_uid {
+        issues.push(
+            severity,
+            Some(path),
+            None,
+            format!(
+                "{what} is owned by uid {}, expected uid {}",
+                meta.uid(),
+                options.trusted_uid
+            ),
+        );
+    }
+    if meta.mode() & 0o022 != 0 {
+        issues.push(
+            severity,
+            Some(path),
+            None,
+            format!(
+                "{what} is group- or world-writable (mode {:04o})",
+                meta.mode() & 0o7777
+            ),
+        );
     }
 }
 
@@ -1622,6 +1667,46 @@ membership = "/b"
             messages(&err)
                 .iter()
                 .any(|m| m.contains("conf.d is group- or world-writable"))
+        );
+    }
+
+    #[test]
+    fn fifo_fragment_rejected_without_blocking() {
+        let fx = Fixture::new();
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            fx.path("etc/conf.d/a.toml"),
+            rustix::fs::FileType::Fifo,
+            Mode::from_raw_mode(0o644),
+            0,
+        )
+        .unwrap();
+        let err = load(&LoadOptions {
+            check_paths: false,
+            ..fx.options()
+        })
+        .unwrap_err();
+        assert!(
+            messages(&err)
+                .iter()
+                .any(|m| m.contains("not a regular file"))
+        );
+    }
+
+    #[test]
+    fn symlinked_file_checked_where_it_resolves() {
+        let fx = Fixture::new();
+        fx.write("projects/real.toml", &fx.state_dir_config(), 0o644);
+        std::os::unix::fs::symlink(fx.path("projects/real.toml"), fx.path("etc/byssus.toml"))
+            .unwrap();
+        load(&fx.options()).unwrap();
+
+        fs::set_permissions(fx.path("projects"), fs::Permissions::from_mode(0o777)).unwrap();
+        let err = load(&fx.options()).unwrap_err();
+        assert!(
+            messages(&err)
+                .iter()
+                .any(|m| m.contains("projects is group- or world-writable"))
         );
     }
 
