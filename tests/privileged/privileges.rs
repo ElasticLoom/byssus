@@ -55,6 +55,8 @@ fn root_with_allow_root_is_reduced_to_sys_admin() {
         assert_eq!(after.cap_bounding, CapabilitySet::SYS_ADMIN.bits());
         assert_eq!(after.cap_ambient, 0);
         assert!(after.no_new_privs);
+        let locked = plan::LOCKED_SECURE_BITS.bits();
+        assert_eq!(after.secure_bits & locked, locked);
         // Securebits are locked: an attempt to regain capabilities fails.
         let all = rustix::thread::CapabilitySets {
             effective: CapabilitySet::all(),
@@ -62,6 +64,37 @@ fn root_with_allow_root_is_reduced_to_sys_admin() {
             inheritable: CapabilitySet::empty(),
         };
         assert!(rustix::thread::set_capabilities(None, all).is_err());
+        0
+    });
+    assert_eq!(code, 0);
+}
+
+#[test]
+#[ignore = "requires a user namespace; run scripts/integration-tests.sh"]
+fn normalization_keeps_securebits_already_set() {
+    require_test_namespace();
+    let code = in_child(|| {
+        // SECBIT_EXEC_RESTRICT_FILE (Linux 6.14+), settable without privileges.
+        const EXEC_RESTRICT_FILE: libc::c_ulong = 1 << 8;
+        // SAFETY: PR_SET_SECUREBITS takes no pointers; unused arguments are zero.
+        if unsafe { libc::prctl(libc::PR_SET_SECUREBITS, EXEC_RESTRICT_FILE, 0, 0, 0) } != 0 {
+            eprintln!("skipping: kernel does not support SECBIT_EXEC_RESTRICT_FILE");
+            return 0;
+        }
+        let before = ProcessState::read_self(proc().as_fd()).unwrap();
+        let request = Request {
+            goal: Goal::KeepSysAdmin,
+            user: None,
+            allow_root: true,
+        };
+        let p = plan::plan(&before.credentials(), &request).unwrap();
+        let after = apply::apply(&p, proc().as_fd()).unwrap();
+        let locked = plan::LOCKED_SECURE_BITS.bits();
+        assert_eq!(after.secure_bits & locked, locked);
+        assert_eq!(
+            u64::from(after.secure_bits) & EXEC_RESTRICT_FILE,
+            EXEC_RESTRICT_FILE
+        );
         0
     });
     assert_eq!(code, 0);

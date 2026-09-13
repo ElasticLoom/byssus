@@ -78,7 +78,7 @@ pub enum Op {
     SetCaps(CapabilitySets),
     /// `PR_CAPBSET_DROP` for every capability not in the set.
     DropBoundingExcept(CapabilitySet),
-    /// `PR_SET_SECUREBITS`.
+    /// `PR_SET_SECUREBITS` adding these bits; bits already set are kept.
     SetSecureBits(CapabilitiesSecureBits),
     /// `PR_SET_KEEPCAPS`.
     SetKeepCaps(bool),

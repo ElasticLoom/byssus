@@ -36,6 +36,8 @@ pub struct ProcessState {
     pub cap_ambient: u64,
     /// `NoNewPrivs`.
     pub no_new_privs: bool,
+    /// Securebits.
+    pub secure_bits: u32,
 }
 
 impl ProcessState {
@@ -58,6 +60,7 @@ impl ProcessState {
             cap_bounding: read_set(rustix::thread::capability_is_in_bounding_set)?,
             cap_ambient: read_set(rustix::thread::capability_is_in_ambient_set)?,
             no_new_privs: rustix::thread::no_new_privs()?,
+            secure_bits: rustix::thread::capabilities_secure_bits()?.bits(),
         })
     }
 
@@ -175,7 +178,11 @@ fn apply_op(op: &Op) -> io::Result<()> {
         Op::ClearAmbient => rustix::thread::clear_ambient_capability_set()?,
         Op::SetCaps(sets) => rustix::thread::set_capabilities(None, *sets)?,
         Op::DropBoundingExcept(keep) => drop_bounding_except(*keep)?,
-        Op::SetSecureBits(bits) => rustix::thread::set_capabilities_secure_bits(*bits)?,
+        Op::SetSecureBits(bits) => {
+            // Setting replaces every bit; keep restrictions already in place.
+            let current = rustix::thread::capabilities_secure_bits()?;
+            rustix::thread::set_capabilities_secure_bits(current | *bits)?;
+        }
         Op::SetKeepCaps(enable) => rustix::thread::set_keep_capabilities(*enable)?,
         Op::SetGroups(groups) => {
             let gids: Vec<Gid> = groups.iter().map(|&g| Gid::from_raw(g)).collect();
@@ -249,6 +256,17 @@ pub fn verify(plan: &PrivilegePlan, status: &ProcessState) -> Result<(), String>
     }
     if !status.no_new_privs {
         problems.push("no_new_privs is not set".into());
+    }
+    for op in &plan.ops {
+        if let Op::SetSecureBits(bits) = op {
+            if status.secure_bits & bits.bits() != bits.bits() {
+                problems.push(format!(
+                    "securebits {:#x}, expected at least {:#x}",
+                    status.secure_bits,
+                    bits.bits()
+                ));
+            }
+        }
     }
     if plan
         .ops
@@ -356,6 +374,7 @@ mod tests {
             cap_bounding: 1 << 21,
             cap_ambient: 0,
             no_new_privs: true,
+            secure_bits: LOCKED_SECURE_BITS.bits(),
         }
     }
 
@@ -449,6 +468,12 @@ mod tests {
         check(&|s| s.cap_ambient = 1, false, "ambient");
         check(&|s| s.no_new_privs = false, false, "no_new_privs");
         check(&|s| s.cap_bounding = u64::MAX, true, "bounding");
+        check(&|s| s.secure_bits &= !1, true, "securebits");
+
+        // Securebits set beyond those planned are fine.
+        let mut s = base.clone();
+        s.secure_bits |= 1 << 8;
+        assert_eq!(verify(&plan(991, true), &s), Ok(()));
 
         // Bounding set is not checked when it could not be changed.
         let mut s = base.clone();
