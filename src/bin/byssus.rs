@@ -175,6 +175,11 @@ fn main() -> ExitCode {
     }
 }
 
+/// Shown when checks run as root because no service user is configured.
+const ROOT_WITHOUT_USER_WARNING: &str = "checks ran as root because daemon.user is not set, so access \
+    problems for the daemon's service user (for example an unreadable membership or source \
+    directory) are not detected; set daemon.user = \"byssus\" in the main configuration";
+
 fn exit_for(level: Level) -> ExitCode {
     if level == Level::Error {
         ExitCode::FAILURE
@@ -359,6 +364,11 @@ fn dry_run(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
     }
 
     match app::normalize_privileges(Goal::DropAll, config.daemon.user.as_deref(), true) {
+        Ok(plan) if plan.final_uid == 0 => checks.push(Check::new(
+            "privileges",
+            Level::Warn,
+            ROOT_WITHOUT_USER_WARNING,
+        )),
         Ok(plan) => checks.push(Check::new(
             "privileges",
             Level::Ok,
@@ -605,6 +615,9 @@ fn check(
     let plan = app::normalize_privileges(Goal::DropAll, config.daemon.user.as_deref(), true)
         .context("cannot drop privileges for checking")?;
     report.checked_as_uid = Some(plan.final_uid);
+    if plan.final_uid == 0 {
+        report.warnings.push(ROOT_WITHOUT_USER_WARNING.to_owned());
+    }
 
     for issue in config::check_paths(&config) {
         match issue.severity {

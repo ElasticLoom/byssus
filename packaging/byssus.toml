@@ -9,9 +9,11 @@
 # Example group: /usr/share/doc/byssus/examples/conf.d/research.toml
 
 [daemon]
-# Service user to switch to when byssusd is started as root. Not needed under
-# the packaged systemd unit, which starts it as `byssus` directly.
-# user = "byssus"
+# The service user. `byssusd` switches to it when started as root (the packaged
+# systemd unit starts it as this user directly), and `byssus check` and
+# `byssus dry-run` run as root check access as this user, so their results
+# match what the daemon will see.
+user = "byssus"
 
 # State file and lock location (the systemd unit creates this directory).
 # state_dir = "/var/lib/byssus"

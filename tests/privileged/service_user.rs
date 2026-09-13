@@ -44,7 +44,14 @@ impl FakeUser {
             ),
             ("/etc/group", format!("byssus:x:{SERVICE_GID}:\n")),
         ] {
-            let mut content = fs::read_to_string(file).unwrap_or_default();
+            // Replace any real `byssus` entry (for example from an installed
+            // package) so the tests do not depend on the host.
+            let mut content: String = fs::read_to_string(file)
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| !l.starts_with("byssus:"))
+                .map(|l| format!("{l}\n"))
+                .collect();
             content.push_str(&line);
             let copy = dir.path().join(file.trim_start_matches("/etc/"));
             fs::write(&copy, content).unwrap();

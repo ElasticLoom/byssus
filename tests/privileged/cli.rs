@@ -505,3 +505,25 @@ fn check_rejects_slave_only_target_unless_allowed() {
     assert_success(&out);
     assert!(text(&out.stdout).contains("warning: group 'g'"));
 }
+
+#[test]
+#[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
+fn check_and_dry_run_warn_when_running_as_root_without_service_user() {
+    // The test deployment's configuration has no daemon.user, and the
+    // namespace runs the CLI as root.
+    let d = Deployment::new();
+    let out = d.byssus(&["check"]);
+    assert_success(&out);
+    let report = text(&out.stdout);
+    assert!(
+        report.contains("warning: checks ran as root because daemon.user is not set"),
+        "{report}"
+    );
+
+    let out = d.byssus(&["dry-run"]);
+    let report = text(&out.stdout);
+    assert!(
+        report.contains("privileges") && report.contains("= warn (checks ran as root"),
+        "{report}"
+    );
+}

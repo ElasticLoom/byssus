@@ -55,7 +55,8 @@ The package:
 - installs the hardened unit as `/usr/lib/systemd/system/byssusd.service`;
 - creates the `byssus` system user and group, `/var/lib/byssus` (mode
   `0750`) and `/etc/byssus/conf.d`;
-- installs a group-less `/etc/byssus/byssus.toml`, kept across upgrades if
+- installs `/etc/byssus/byssus.toml` with `user = "byssus"` and no groups,
+  kept across upgrades if
   you edit it;
 - installs documentation and examples under `/usr/share/doc/byssus/`;
 - does **not** enable or start the daemon.

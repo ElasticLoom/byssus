@@ -48,7 +48,7 @@ nosymfollow = false   # default false — MOUNT_ATTR_NOSYMFOLLOW
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `user` | none | User to switch to when started as root. |
+| `user` | none | The service user. `byssusd` and `byssus reconcile` switch to it when started as root; `byssus check` and `byssus dry-run` run as root check access as this user. Without it, those checks run as root, miss access problems the service user would hit, and warn about it. The packaged configuration sets `user = "byssus"`. |
 | `state_dir` | `/var/lib/byssus` | Absolute path of the state directory. |
 | `resync_interval_secs` | `60` | Periodic full reconcile interval; `0` disables. |
 
