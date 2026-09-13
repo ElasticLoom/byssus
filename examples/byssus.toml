@@ -1,0 +1,14 @@
+# Example main configuration: /etc/byssus/byssus.toml
+# Owned by root, mode 0644. See docs/DESIGN.md#configuration.
+
+[daemon]
+# Service user to switch to when byssusd is started as root. Not needed when
+# systemd starts it with User=byssus.
+user = "byssus"
+
+# State file and lock location.
+state_dir = "/var/lib/byssus"
+
+# Full reconcile interval in seconds (0 disables). Picks up sources that
+# appear after their membership file and mounts removed out-of-band.
+resync_interval_secs = 60

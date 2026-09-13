@@ -101,13 +101,16 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 
 ## M5 — Deployment artifacts and documentation
 
-- [ ] `contrib/byssusd.service` (no namespace-creating options; verify every option on current systemd)
-- [ ] Verify `StateDirectory=` does not create a mount namespace; use it if safe
-- [ ] Persistent shared anchor mount example (systemd `.mount` unit + `make-shared`)
-- [ ] `contrib/byssus.apparmor` profile
-- [ ] `docs/OPERATIONS.md`: install, users, ACL recipe, anchor mount, container configuration (`rslave`), upgrades, troubleshooting
-- [ ] Example configuration in `examples/`
-- [ ] Man pages or `--help` completeness review
+- [x] `contrib/systemd/byssusd.service` (no namespace-creating options; each option checked against systemd 255 `systemd.exec(5)`; `systemd-analyze security` exposure 2.6; seccomp filter exercised by running the unit tests under it via `systemd-run --user`)
+- [ ] Validate the unit end to end on a real systemd host as root (start, mount, reload, stop)
+- [x] Verify `StateDirectory=` does not create a mount namespace; use it if safe
+- [x] Persistent shared anchor mount example (systemd `.mount` unit with `bind,shared`; fstab equivalent documented)
+- [x] `contrib/sysusers.d/byssus.conf`
+- [ ] `contrib/byssus.apparmor` profile — deferred until it can be written and validated against the new mount API (`open_tree`/`move_mount`/`mount_setattr`) on a root-capable AppArmor host; an unvalidated profile risks breaking the daemon
+- [x] `docs/OPERATIONS.md`: install, users, ACL recipe, anchor mount, container configuration (`rslave`), upgrades, troubleshooting
+- [x] Example configuration in `examples/` (validated by a unit test)
+- [x] `--help` completeness review
+- [ ] Man pages (e.g. generated from the clap definitions)
 
 ## M6 — Release engineering and publication
 

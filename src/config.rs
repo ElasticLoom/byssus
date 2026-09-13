@@ -1028,6 +1028,26 @@ membership = "/b"
     }
 
     #[test]
+    fn shipped_examples_are_valid() {
+        let loaded = load_from_strs(&[
+            (
+                Path::new("examples/byssus.toml"),
+                include_str!("../examples/byssus.toml"),
+                true,
+            ),
+            (
+                Path::new("examples/conf.d/research.toml"),
+                include_str!("../examples/conf.d/research.toml"),
+                false,
+            ),
+        ])
+        .unwrap();
+        assert!(loaded.warnings.is_empty());
+        assert_eq!(loaded.config.daemon.user.as_deref(), Some("byssus"));
+        assert!(loaded.config.groups.contains_key(&Name::new("research").unwrap()));
+    }
+
+    #[test]
     fn invalid_toml_reports_file() {
         let err = load_from_strs(&[(Path::new("/conf.d/x.toml"), "[groups", false)]).unwrap_err();
         assert!(messages(&err)[0].starts_with("/conf.d/x.toml: invalid TOML"));

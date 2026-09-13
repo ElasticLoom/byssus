@@ -1,0 +1,19 @@
+# Example drop-in: /etc/byssus/conf.d/research.toml
+# Owned by root, mode 0644. Groups may be defined here or in the main file.
+
+[groups.research]
+# Trusted root and per-member template for the directories to expose.
+source_root = "/srv/example/projects"
+source      = "{name}/workspace"
+
+# Trusted root and per-member template for where views are mounted. The target
+# root must be on a shared mount (see docs/OPERATIONS.md).
+target_root = "/srv/example/groups/research/view"
+target      = "{name}"
+
+# Empty files here name the members. Written by your application.
+membership  = "/srv/example/membership/research"
+
+read_only   = true   # MOUNT_ATTR_RDONLY (default true)
+noexec      = true   # MOUNT_ATTR_NOEXEC (default true)
+nosymfollow = false  # MOUNT_ATTR_NOSYMFOLLOW (default false)

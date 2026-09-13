@@ -1,0 +1,71 @@
+# systemd unit for byssusd.
+#
+# IMPORTANT: byssusd must create mounts in the host mount namespace. Do not add
+# any option that gives the service its own mount namespace, including:
+#   ProtectSystem= ProtectHome= PrivateTmp= PrivateDevices= PrivateMounts=
+#   ReadWritePaths= ReadOnlyPaths= InaccessiblePaths= ExecPaths= NoExecPaths=
+#   TemporaryFileSystem= BindPaths= BindReadOnlyPaths= MountAPIVFS=
+#   ProtectKernelTunables= ProtectKernelModules= ProtectKernelLogs=
+#   ProtectControlGroups= ProtectProc= ProcSubset= RootDirectory= RootImage=
+#   LogNamespace= PrivateUsers= DynamicUser= MountFlags=
+# Any of these silently traps every mount inside the service. byssusd detects
+# this at startup (slave-only propagation) and refuses to run.
+#
+# See docs/OPERATIONS.md for installation.
+
+[Unit]
+Description=Byssus filesystem attachment daemon
+Documentation=https://github.com/ElasticLoom/byssus
+After=local-fs.target
+# Recreate mounts before containers start so they see every member at once.
+Before=docker.service containerd.service podman.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/byssusd
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+# Dedicated user holding only CAP_SYS_ADMIN. The binary has no file
+# capabilities; the capability is ambient before exec, so NoNewPrivileges is
+# safe.
+User=byssus
+Group=byssus
+AmbientCapabilities=CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_SYS_ADMIN
+NoNewPrivileges=yes
+SecureBits=noroot noroot-locked
+
+# State directory: /var/lib/byssus, mode 0750, owned by the service user.
+StateDirectory=byssus
+StateDirectoryMode=0750
+UMask=0022
+
+# Hardening that does not create a mount namespace.
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+PrivateNetwork=yes
+PrivateIPC=yes
+ProtectHostname=yes
+ProtectClock=yes
+DevicePolicy=closed
+KeyringMode=private
+RemoveIPC=yes
+SystemCallArchitectures=native
+# Allow the service baseline plus the mount API, deny privileged and resource
+# calls, then re-allow capset (used to drop to exactly CAP_SYS_ADMIN). If you
+# remove User= so byssusd starts as root and switches user itself, also allow
+# setgroups, setresuid and setresgid.
+SystemCallFilter=@system-service @mount
+SystemCallFilter=~@privileged @resources
+SystemCallFilter=capset
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

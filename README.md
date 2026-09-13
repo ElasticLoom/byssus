@@ -11,8 +11,9 @@ other's directories. Group membership is declared by creating or deleting empty
 files; the daemon turns that into bind mounts, and mount propagation carries
 them into already-running containers without restarts.
 
-> **Status: early development.** Byssus is not yet usable. See
-> [docs/TODO.md](docs/TODO.md) for milestones and progress.
+> **Status: pre-release.** The daemon and CLI are functional and tested, but
+> Byssus has not had a release or an external security review yet. See
+> [docs/TODO.md](docs/TODO.md) for remaining work.
 
 ## How it works
 
@@ -74,6 +75,7 @@ membership  = "/srv/example/membership/research"
 
 ## Documentation
 
+- [Operations guide](docs/OPERATIONS.md) — installation, permissions, systemd, containers, troubleshooting
 - [Design and security contract](docs/DESIGN.md)
 - [Milestones and TODO](docs/TODO.md)
 - [Security policy](SECURITY.md)

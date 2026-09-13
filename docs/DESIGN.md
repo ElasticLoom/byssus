@@ -699,12 +699,17 @@ Many systemd hardening options silently place a service in a private mount
 namespace with `slave` propagation, which traps every mount the daemon makes.
 The unit shipped in `contrib/` therefore uses **none** of: `ProtectSystem=`,
 `ProtectHome=`, `PrivateTmp=`, `PrivateDevices=`, `PrivateMounts=`,
-`ReadWritePaths=`, `ReadOnlyPaths=`, `InaccessiblePaths=`, `TemporaryFileSystem=`,
-`BindPaths=`, `BindReadOnlyPaths=`, `ProtectKernelTunables=`,
-`ProtectKernelModules=`, `ProtectKernelLogs=`, `ProtectControlGroups=`,
-`ProtectProc=`, `ProcSubset=`, `MountFlags=`. Hardening is achieved instead
-with capability bounding, `NoNewPrivileges=`, a system call filter, namespace
-and address-family restrictions, and an optional AppArmor profile.
+`ReadWritePaths=`, `ReadOnlyPaths=`, `InaccessiblePaths=`, `ExecPaths=`,
+`NoExecPaths=`, `TemporaryFileSystem=`, `BindPaths=`, `BindReadOnlyPaths=`,
+`MountAPIVFS=`, `ProtectKernelTunables=`, `ProtectKernelModules=`,
+`ProtectKernelLogs=`, `ProtectControlGroups=`, `ProtectProc=`, `ProcSubset=`,
+`RootDirectory=`, `RootImage=`, `LogNamespace=`, `PrivateUsers=`,
+`DynamicUser=`, `MountFlags=`. Hardening is achieved instead with capability
+bounding, `NoNewPrivileges=`, locked `noroot` securebits, a system call filter
+(`@system-service @mount`, minus `@privileged` and `@resources`, plus
+`capset`), namespace, address-family, realtime, SUID and W^X restrictions,
+private network and IPC namespaces (which do not affect mounts), and
+`DevicePolicy=closed`.
 `MountFlags=shared` is explicitly not used: it would propagate systemd's own
 sandbox remounts back to the host.
 
@@ -818,42 +823,16 @@ syscalls.
 
 ## Deployment
 
-A complete operations guide lives in `docs/OPERATIONS.md` (see TODO). In
-outline:
+Installation, permissions, the propagation anchor, the systemd unit, container
+configuration and troubleshooting are covered in
+[OPERATIONS.md](OPERATIONS.md). Deployment artifacts ship in `contrib/`:
 
-```bash
-# Build static binaries
-cargo build --release --target x86_64-unknown-linux-musl
+- `contrib/systemd/byssusd.service` — hardened unit without mount namespacing;
+- `contrib/systemd/srv-example-groups.mount` — example shared propagation
+  anchor;
+- `contrib/sysusers.d/byssus.conf` — service user.
 
-# Install
-install -o root -g root -m 0755 target/x86_64-unknown-linux-musl/release/byssusd /usr/local/bin/
-install -o root -g root -m 0755 target/x86_64-unknown-linux-musl/release/byssus  /usr/local/bin/
-
-# Service user and state directory
-useradd --system --no-create-home --shell /usr/sbin/nologin byssus
-install -d -o byssus -g byssus -m 0750 /var/lib/byssus
-
-# Target root owned by byssus, on a shared anchor mount
-install -d -o root -g root -m 0755 /srv/example/groups
-install -d -o byssus -g byssus -m 0755 /srv/example/groups/research/view
-mount --bind /srv/example/groups /srv/example/groups
-mount --make-shared /srv/example/groups
-
-# Search-only access for byssus to source trees, inherited by new members
-setfacl    -m u:byssus:x /srv/example /srv/example/projects
-setfacl -d -m u:byssus:x /srv/example/projects
-
-# Membership directory: written by the application, readable by byssus
-install -d -o app -g app -m 0750 /srv/example/membership/research
-setfacl -m u:byssus:rx /srv/example/membership/research
-```
-
-Note that default ACLs apply to directories created *by* a process that
-respects them; tools that `chmod` explicitly after creation can strip the
-mask, and integrations should verify access with `byssus dry-run`.
-
-The systemd unit, drop-in guidance for persistent anchor mounts, and an
-AppArmor profile ship in `contrib/`.
+Example configuration is in `examples/`.
 
 ## Security contract
 
