@@ -734,6 +734,16 @@ fn check_cross_group(config: &Config, issues: &mut Issues) {
     }
 }
 
+/// Checks that configured directories exist, as the current user. Returns
+/// errors for missing or non-directory paths and warnings when access is
+/// denied.
+#[must_use]
+pub fn check_paths(config: &Config) -> Vec<Issue> {
+    let mut issues = Issues::default();
+    check_paths_exist(config, &mut issues);
+    issues.0
+}
+
 fn check_paths_exist(config: &Config, issues: &mut Issues) {
     let mut check = |group: Option<&GroupConfig>, field: &str, path: &AbsPath| {
         let origin = group.map_or_else(

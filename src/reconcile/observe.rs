@@ -1,0 +1,171 @@
+//! Gathering desired membership and kernel observations for planning.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::os::fd::AsFd;
+
+use crate::fsops;
+use crate::membership::Rejection;
+use crate::mount;
+use crate::name::Name;
+use crate::reconcile::plan::{DesiredMount, Location, Observations, SourceState, TargetState};
+use crate::runtime::Runtime;
+use crate::state::{RecordKey, State};
+use crate::template::InterpolateError;
+
+/// Something noticed while observing that is reported but not planned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Note {
+    /// A membership entry was rejected.
+    Rejected {
+        /// Group.
+        group: Name,
+        /// The rejection.
+        rejection: Rejection,
+    },
+    /// A member's name could not be interpolated into a template.
+    InterpolationFailed {
+        /// Group.
+        group: Name,
+        /// Member.
+        name: Name,
+        /// `source` or `target`.
+        field: &'static str,
+        /// Why.
+        error: InterpolateError,
+    },
+    /// The membership directory could not be read; the group is frozen for
+    /// this pass.
+    MembershipUnreadable {
+        /// Group.
+        group: Name,
+        /// Why.
+        error: String,
+    },
+}
+
+/// Everything the planner needs, plus notes for reporting.
+#[derive(Debug, Default)]
+pub struct Observed {
+    /// Desired mounts of groups that were scanned successfully.
+    pub desired: Vec<DesiredMount>,
+    /// Kernel observations.
+    pub observations: Observations,
+    /// Groups whose records must not be touched this pass.
+    pub frozen: BTreeSet<Name>,
+    /// Valid members per scanned group.
+    pub members: BTreeMap<Name, BTreeSet<Name>>,
+    /// Notes to report.
+    pub notes: Vec<Note>,
+}
+
+/// Scans membership, resolves sources and inspects every relevant target.
+///
+/// `degraded` groups are not scanned and are frozen.
+pub fn observe(
+    runtime: &mut Runtime,
+    state: &State,
+    degraded: &BTreeSet<Name>,
+    unique_supported: bool,
+) -> Observed {
+    let mut out = Observed {
+        frozen: degraded.clone(),
+        ..Observed::default()
+    };
+
+    for (group_name, group) in &runtime.groups {
+        if degraded.contains(group_name) {
+            continue;
+        }
+        let membership = match fsops::scan_membership(group.membership_dir.as_fd()) {
+            Ok(m) => m,
+            Err(e) => {
+                out.frozen.insert(group_name.clone());
+                out.notes.push(Note::MembershipUnreadable {
+                    group: group_name.clone(),
+                    error: e.to_string(),
+                });
+                continue;
+            }
+        };
+        out.notes.extend(
+            membership
+                .rejected
+                .into_iter()
+                .map(|rejection| Note::Rejected {
+                    group: group_name.clone(),
+                    rejection,
+                }),
+        );
+
+        let cfg = &group.config;
+        for name in &membership.members {
+            let interpolate = |field, template: &crate::template::Template| {
+                template
+                    .interpolate(name)
+                    .map_err(|error| Note::InterpolationFailed {
+                        group: group_name.clone(),
+                        name: name.clone(),
+                        field,
+                        error,
+                    })
+            };
+            let (source, target) = match (
+                interpolate("source", &cfg.source),
+                interpolate("target", &cfg.target),
+            ) {
+                (Ok(s), Ok(t)) => (s, t),
+                (Err(note), _) | (_, Err(note)) => {
+                    out.notes.push(note);
+                    continue;
+                }
+            };
+            out.desired.push(DesiredMount {
+                key: RecordKey {
+                    group: group_name.clone(),
+                    name: name.clone(),
+                },
+                source: Location {
+                    root: cfg.source_root.clone(),
+                    path: source,
+                },
+                target: Location {
+                    root: cfg.target_root.clone(),
+                    path: target,
+                },
+                attrs: cfg.attrs,
+            });
+        }
+        out.members.insert(group_name.clone(), membership.members);
+    }
+
+    for d in &out.desired {
+        let source = match runtime.roots.get(&d.source.root) {
+            Ok(root) => match fsops::resolve_dir(root, &d.source.path) {
+                Ok(fd) => match fsops::dev_ino(fd.as_fd()) {
+                    Ok(id) => SourceState::Resolved(id),
+                    Err(e) => SourceState::Unavailable(format!("{}: {e}", d.source)),
+                },
+                Err(e) => SourceState::Unavailable(format!("{}: {e}", d.source)),
+            },
+            Err(e) => SourceState::Unavailable(format!("source root {}: {e}", d.source.root)),
+        };
+        out.observations.sources.insert(d.key.clone(), source);
+    }
+
+    let mut targets: BTreeSet<Location> = out.desired.iter().map(|d| d.target.clone()).collect();
+    targets.extend(
+        state
+            .records()
+            .filter(|r| !out.frozen.contains(&r.group))
+            .map(crate::state::MountRecord::target_location),
+    );
+    for location in targets {
+        let observed = match runtime.roots.get(&location.root) {
+            Ok(root) => mount::inspect(root, &location.path, unique_supported),
+            Err(e) => TargetState::Unavailable(format!("target root {}: {e}", location.root)),
+        };
+        out.observations.targets.insert(location, observed);
+    }
+
+    out
+}
