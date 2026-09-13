@@ -67,8 +67,6 @@ pub enum MemberState {
     WouldRemount,
     /// Would be unmounted.
     WouldUnmount,
-    /// Restrictions would be added in place.
-    WouldReattr,
     /// A stale state record would be removed.
     StaleRecord,
     /// A conflicting mount is at the target.
@@ -98,7 +96,6 @@ impl MemberState {
             Self::WouldMount => "would_mount",
             Self::WouldRemount => "would_remount",
             Self::WouldUnmount => "would_unmount",
-            Self::WouldReattr => "would_reattr",
             Self::StaleRecord => "stale_record",
             Self::Conflict => "conflict",
             Self::MountedOwnershipUnknown => "mounted_ownership_unknown",
@@ -117,7 +114,6 @@ impl MemberState {
             | Self::WouldMount
             | Self::WouldRemount
             | Self::WouldUnmount
-            | Self::WouldReattr
             | Self::StaleRecord
             | Self::MountedOwnershipUnknown => Level::Ok,
             Self::SourceUnavailable | Self::RelocationBlocked | Self::Rejected => Level::Warn,
@@ -198,13 +194,6 @@ pub fn member_statuses(
                 &record.key(),
                 record.target_location().to_string(),
                 MemberState::StaleRecord,
-                None,
-            ),
-            Action::Reattr { record, .. } => set(
-                &mut map,
-                &record.key(),
-                record.target_location().to_string(),
-                MemberState::WouldReattr,
                 None,
             ),
             Action::Mount { desired } => {
@@ -428,7 +417,7 @@ pub fn group_reports(
             let group_statuses = statuses.iter().filter(|s| s.group == name.as_str());
             let existing_mounts = group_statuses
                 .clone()
-                .filter(|s| matches!(s.state, MemberState::Mounted | MemberState::WouldReattr))
+                .filter(|s| matches!(s.state, MemberState::Mounted | MemberState::WouldRemount))
                 .count();
             let conflicts = group_statuses
                 .clone()

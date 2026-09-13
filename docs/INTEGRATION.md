@@ -14,8 +14,10 @@ covered in [OPERATIONS.md](OPERATIONS.md).
 
 ## Attach containers
 
-Mount the group's view into containers **read-only with `rslave`
-propagation**. New members then appear without restarting the container.
+Mount the group's view into containers **with `rslave` propagation**. New
+members then appear without restarting the container. Binding the view
+`readonly` is recommended so consumers cannot create files next to the member
+directories, but note what it does *not* do (below).
 
 Docker:
 
@@ -39,9 +41,25 @@ services:
           propagation: rslave
 ```
 
-Inside the container, `/group/<member>` is each member's source directory,
-read-only, with `nosuid`, `nodev` and (by default) `noexec`. Filesystems
-mounted *inside* a member's source directory are never exposed.
+Inside the container, `/group/<member>` is each member's source directory, with
+`nosuid`, `nodev`, and by default read-only and `noexec`. Filesystems mounted
+*inside* a member's source directory are never exposed.
+
+**Only the group's `read_only` setting controls whether members are
+writable.** Each member is its own mount, and a read-only flag on the view's
+bind in the container does not apply to mounts beneath it. With
+`read_only = false`, consumers can write into members even through a
+`readonly` view bind.
+
+**Read-write groups** (`read_only = false`) let every consumer of the group
+create, modify and delete files in every member's source directory, as the
+consumer's own user and subject to ordinary file permissions. Use them only
+when every consumer of the group is trusted to change every member.
+
+**Changing a group's attributes** (for example switching `read_only`) is
+applied by re-creating each member's mount, because mount attributes do not
+propagate into running containers. Members briefly disappear and reappear in
+consumers; processes with files already open keep using them.
 
 ## Integrate an application
 
@@ -126,8 +144,9 @@ groups come from how you lay out and wire the configuration, described below.
   not yet detect two different paths that reach the same directory).
 - **Never mount membership directories into containers.** A consumer that can
   write one could add any project of that tenant to its group.
-- **Never give consumers write access to views** (Byssus mounts are read-only
-  regardless, but the view directory itself should not be writable either).
+- **Bind views into containers `readonly`** so consumers cannot create files
+  beside member directories. This does not make members read-only; the
+  group's `read_only` setting does.
 - **Prefix group names with the tenant**, for example `acme-research`. Group
   names are global to the daemon.
 - **Keep the `byssus` group small.** Members can read the state file and run

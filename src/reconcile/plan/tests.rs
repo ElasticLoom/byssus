@@ -225,7 +225,7 @@ fn row4_ours_with_unknown_attrs_is_noop() {
 }
 
 #[test]
-fn row4_ours_attribute_drift_reapplied() {
+fn row4_ours_attribute_drift_remounts() {
     let d = desired("g", "a");
     let id = ident(7, 1);
     for drift in [
@@ -261,12 +261,16 @@ fn row4_ours_attribute_drift_reapplied() {
             .plan();
         assert_eq!(
             actions(&p),
-            [&Action::Reattr {
-                record,
-                attrs: MountAttrs::default()
-            }],
+            [
+                &Action::Unmount {
+                    record,
+                    reason: UnmountReason::AttributesDrifted
+                },
+                &Action::Mount { desired: d.clone() }
+            ],
             "{drift:?}"
         );
+        assert_eq!(p.steps[1].depends_on, [0]);
     }
 }
 
@@ -295,7 +299,7 @@ fn row4_extra_restrictions_tolerated() {
 }
 
 #[test]
-fn row4_tightened_configuration_reapplied() {
+fn row4_tightened_configuration_remounts() {
     let old = desired("g", "a");
     let mut d = old.clone();
     d.attrs.nosymfollow = true;
@@ -309,11 +313,15 @@ fn row4_tightened_configuration_reapplied() {
         .plan();
     assert_eq!(
         actions(&p),
-        [&Action::Reattr {
-            record,
-            attrs: d.attrs
-        }]
+        [
+            &Action::Unmount {
+                record,
+                reason: UnmountReason::AttributesChanged
+            },
+            &Action::Mount { desired: d }
+        ]
     );
+    assert_eq!(p.steps[1].depends_on, [0]);
 }
 
 #[test]
@@ -334,7 +342,7 @@ fn row4_relaxed_configuration_remounts() {
         [
             &Action::Unmount {
                 record,
-                reason: UnmountReason::AttributesRelaxed
+                reason: UnmountReason::AttributesChanged
             },
             &Action::Mount { desired: d }
         ]
@@ -915,7 +923,8 @@ fn steps_ordered_by_phase_with_remapped_dependencies() {
         .plan();
 
     let phases: Vec<u8> = p.steps.iter().map(|s| s.action.phase()).collect();
-    assert_eq!(phases, [0, 0, 1, 2, 2]);
+    // Unmounts (removed, drift, changed) before mounts (first, drift, changed).
+    assert_eq!(phases, [0, 0, 0, 1, 1, 1]);
     // The remount of "changed" depends on its unmount.
     let unmount_changed = p
         .steps

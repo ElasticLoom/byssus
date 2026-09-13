@@ -36,3 +36,14 @@ Decisions that refined the original design draft, with rationale:
 13. **Rejections are logged once** (and again only when their reason changes,
     plus once when cleared) rather than on every pass, and are visible on
     demand through `status` and `dry-run`.
+14. **Mount attributes are never changed in place.** Mount attributes do not
+    propagate, so `mount_setattr` on the host's mount would not reach copies
+    already propagated into running containers (verified by an integration
+    test). Any change of configured attributes, or drift, re-creates the
+    mount, which does propagate. Attributes are also only ever set on a new
+    clone, never cleared, so a view is never more permissive than its source.
+15. **Read-only is enforced by Byssus, not by the consumer's bind.** A
+    read-only bind of the view does not apply to member mounts beneath it, so
+    the group's `read_only` setting is the only control over member
+    writability, and read-write groups are documented as trusting every
+    consumer with every member's files.

@@ -130,16 +130,6 @@ pub struct MountAttrs {
     pub nosymfollow: bool,
 }
 
-impl MountAttrs {
-    /// Whether `self` lacks a restriction that `applied` has.
-    #[must_use]
-    pub fn relaxes(&self, applied: &Self) -> bool {
-        (applied.read_only && !self.read_only)
-            || (applied.noexec && !self.noexec)
-            || (applied.nosymfollow && !self.nosymfollow)
-    }
-}
-
 impl Default for MountAttrs {
     fn default() -> Self {
         Self {
@@ -1014,32 +1004,6 @@ nosymfollow = true
             main_only("[daemon]\nstate_dir = \"relative\"\n"),
             "daemon.state_dir",
         );
-    }
-
-    #[test]
-    fn attrs_relaxes() {
-        let strict = MountAttrs {
-            read_only: true,
-            noexec: true,
-            nosymfollow: true,
-        };
-        let loose = MountAttrs {
-            read_only: false,
-            noexec: false,
-            nosymfollow: false,
-        };
-        assert!(loose.relaxes(&strict));
-        assert!(!strict.relaxes(&loose));
-        assert!(!strict.relaxes(&strict));
-        for field in 0..3 {
-            let mut a = strict;
-            match field {
-                0 => a.read_only = false,
-                1 => a.noexec = false,
-                _ => a.nosymfollow = false,
-            }
-            assert!(a.relaxes(&strict), "{field}");
-        }
     }
 
     #[test]

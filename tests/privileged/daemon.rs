@@ -457,3 +457,74 @@ fn persistent_rejection_is_logged_once_and_cleared() {
     daemon.wait_log("op=reject_cleared group=g name=link");
     assert_eq!(daemon.stop(), 0);
 }
+
+#[test]
+#[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
+fn read_write_group_through_container_view() {
+    let d = Deployment::new();
+    d.write_config("read_only = false\n");
+    let view = d.sb.make_shared_anchor("view");
+    // A container binding the view with rslave, as documented, both writable
+    // and read-only at the bind level.
+    let consumer = d.sb.attach_consumer(&view, "container/group");
+    let ro_consumer = d.sb.attach_consumer(&view, "container-ro/group");
+    rustix::mount::mount_remount(
+        ro_consumer.as_path(),
+        rustix::mount::MountFlags::BIND | rustix::mount::MountFlags::RDONLY,
+        "",
+    )
+    .unwrap();
+    d.add_source("shared");
+    d.join("shared");
+    let daemon = Daemon::started(&d);
+    wait_until("visible", || consumer.join("shared/README").exists());
+
+    // Create, modify, rename and delete through the container view; changes
+    // land in the member's source directory.
+    fs::write(consumer.join("shared/new.txt"), "from container").unwrap();
+    assert_eq!(
+        fs::read_to_string(d.path("src/shared/workspace/new.txt")).unwrap(),
+        "from container"
+    );
+    fs::write(consumer.join("shared/README"), "edited").unwrap();
+    assert_eq!(
+        fs::read_to_string(d.path("src/shared/workspace/README")).unwrap(),
+        "edited"
+    );
+    fs::rename(
+        consumer.join("shared/new.txt"),
+        consumer.join("shared/renamed.txt"),
+    )
+    .unwrap();
+    fs::create_dir(consumer.join("shared/dir")).unwrap();
+    fs::remove_file(consumer.join("shared/renamed.txt")).unwrap();
+    assert!(d.path("src/shared/workspace/dir").is_dir());
+    assert!(!d.path("src/shared/workspace/renamed.txt").exists());
+
+    // A read-only bind of the view does not restrict read-write members.
+    assert!(fs::write(ro_consumer.join("shared/through-ro-bind.txt"), "x").is_ok());
+
+    // Tightening to read-only re-creates the mount, reaching the container.
+    d.write_config("read_only = true\n");
+    daemon.signal(Signal::HUP);
+    daemon.wait_log("reason=\"configured mount attributes changed\"");
+    wait_until("read-only in container", || {
+        consumer.join("shared/README").exists()
+            && fs::write(consumer.join("shared/after.txt"), "x")
+                .is_err_and(|e| e.raw_os_error() == Some(libc::EROFS))
+    });
+    assert!(
+        fs::write(ro_consumer.join("shared/after.txt"), "x").is_err(),
+        "read-only reaches every consumer"
+    );
+
+    // Loosening again re-creates it writable.
+    d.write_config("read_only = false\n");
+    daemon.signal(Signal::HUP);
+    wait_until("writable again", || {
+        fs::write(consumer.join("shared/again.txt"), "x").is_ok()
+    });
+    assert_eq!(daemon.stop(), 0);
+    let record = d.state();
+    assert!(!record.records().next().unwrap().read_only);
+}

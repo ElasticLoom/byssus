@@ -301,6 +301,13 @@ string-constructed path reaches a privileged syscall.
    Attributes are only ever *set*, never cleared: a clone inherits its source
    mount's restrictions (for example, a read-only source filesystem stays
    read-only), and a view is never more permissive than its source.
+
+   Attributes are also never changed on an existing mount. Mount attributes
+   do not propagate: each consumer holds its own copy of a propagated mount,
+   and `mount_setattr` on the host's mount leaves those copies unchanged. A
+   change of configured attributes, or a mount found not to enforce them, is
+   therefore applied by unmounting and creating the mount again — both of
+   which do propagate.
 6. **Attach**: `move_mount(tree_fd, "", target_fd, "", MOVE_MOUNT_F_EMPTY_PATH
    | MOVE_MOUNT_T_EMPTY_PATH)`. Both flags are required because both paths are
    empty.
@@ -461,7 +468,7 @@ new location. The old mount is removed before the new one is created.
 | 1 | yes | no | no | — | resolves | **Create**; record identity. |
 | 2 | yes | no | no | — | fails | Skip, `warn` (source missing or inaccessible). Retried on resync. |
 | 3 | yes | no | yes | — | — | **Conflict** (foreign mount at target). Log, do not touch. |
-| 4 | yes | yes | yes | match | same | Ours. If configuration *removed* a restriction the record shows was applied: **unmount, then create**. Otherwise, if configuration added a restriction or the mount lacks a required one: **add the missing restrictions** in place with `mount_setattr` and update the record. |
+| 4 | yes | yes | yes | match | same | Ours. If the configured attributes differ from those recorded, or the mount does not enforce a configured restriction: **unmount, then create**, so the change reaches every consumer. |
 | 5 | yes | yes | yes | match | changed | Source replaced: **unmount, then create**. |
 | 6 | yes | yes | yes | match | fails | Source gone: **unmount**, remove record, `warn`. |
 | 7 | yes | yes | yes | mismatch | — | **Conflict** (target replaced). Log, do not touch; keep record. |
@@ -558,7 +565,7 @@ Additional rules:
 5. Reconcile every group. Groups that were removed have all their recorded
    mounts unmounted (the "not a member" rows); new groups are reconciled from
    scratch; groups with changed roots or templates move their mounts; groups
-   with changed attributes have them re-applied in place.
+   with changed attributes have their mounts re-created.
 
 ### Shutdown and restarts
 

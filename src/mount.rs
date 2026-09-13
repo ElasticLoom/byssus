@@ -178,20 +178,6 @@ fn open_verified(
     }
 }
 
-/// Adds restrictions to the recorded mount at `relative` beneath
-/// `target_root`, after verifying its identity on a pinned descriptor.
-pub fn add_restrictions(
-    target_root: BorrowedFd<'_>,
-    relative: &str,
-    expected: &MountIdentity,
-    attrs: &MountAttrs,
-    unique_supported: bool,
-) -> Result<(), VerifiedOpError> {
-    let fd = open_verified(target_root, relative, expected, unique_supported)?;
-    sys::mount_setattr_add(fd.as_fd(), attr_bits(attrs))?;
-    Ok(())
-}
-
 /// Lazily unmounts the recorded mount at `relative` beneath `target_root`.
 ///
 /// The target is opened and pinned, its identity verified, and then

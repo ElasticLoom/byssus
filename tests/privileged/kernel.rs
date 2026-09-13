@@ -190,10 +190,6 @@ fn replaced_mount_is_detected_and_left_alone() {
         sb.path("view/a/foreign.txt").exists(),
         "foreign mount was touched"
     );
-    match mount::add_restrictions(m.target_root.as_fd(), "a", &id, &DEFAULT, unique()) {
-        Err(VerifiedOpError::IdentityMismatch { .. }) => {}
-        other => panic!("expected identity mismatch, got {other:?}"),
-    }
 }
 
 #[test]
@@ -217,28 +213,81 @@ fn stacked_mount_on_top_is_a_mismatch() {
 
 #[test]
 #[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
-fn restrictions_are_added_in_place() {
+fn attribute_changes_do_not_reach_propagated_copies() {
+    // Documents the kernel behavior that makes Byssus re-create mounts rather
+    // than change attributes in place: mount_setattr on the host mount leaves
+    // copies already propagated into consumers unchanged.
     let sb = Sandbox::new();
-    let m = setup(&sb, "a");
+    sb.write("src/a/workspace/f", "f");
+    let view = sb.make_shared_anchor("view");
+    let consumer = sb.attach_consumer(&view, "container/group");
+    let source_root = sb.open_root("src");
+    let target_root = sb.open_root("view");
     let loose = MountAttrs {
         read_only: false,
         noexec: false,
         nosymfollow: false,
     };
-    let id = mount_member(&m, "a", loose);
-    fs::write(sb.path("view/a/writable.txt"), "w").unwrap();
+    let source = fsops::resolve_dir(source_root.as_fd(), "a/workspace").unwrap();
+    let target = fsops::ensure_dirs_beneath(target_root.as_fd(), &["a".into()]).unwrap();
+    let id = mount::create_bind(source.as_fd(), target.as_fd(), &loose, unique()).unwrap();
+    fs::write(consumer.join("a/before"), "w").unwrap();
 
-    mount::add_restrictions(m.target_root.as_fd(), "a", &id, &DEFAULT, unique()).unwrap();
-    let err = fs::write(sb.path("view/a/writable2.txt"), "w").unwrap_err();
-    assert_eq!(errno_of(&err), libc::EROFS);
-    // Identity is unchanged by attribute changes.
-    match mount::inspect(m.target_root.as_fd(), "a", unique()) {
-        TargetState::Mounted { identity, attrs } => {
-            assert!(identity.matches(&id));
-            assert!(attrs.unwrap().noexec);
-        }
-        other => panic!("unexpected {other:?}"),
-    }
+    let mounted = fsops::resolve_dir(target_root.as_fd(), "a").unwrap();
+    byssus::sys::mount_setattr_add(mounted.as_fd(), byssus::sys::MOUNT_ATTR_RDONLY).unwrap();
+    assert_eq!(
+        errno_of(&fs::write(view.join("a/host"), "w").unwrap_err()),
+        libc::EROFS
+    );
+    assert!(
+        fs::write(consumer.join("a/consumer"), "w").is_ok(),
+        "kernel behavior changed: attributes now propagate"
+    );
+
+    // Re-creating the mount does reach the consumer.
+    drop((target, mounted));
+    mount::unmount_verified(target_root.as_fd(), "a", &id, unique()).unwrap();
+    assert!(!consumer.join("a/f").exists());
+    let target = fsops::ensure_dirs_beneath(target_root.as_fd(), &["a".into()]).unwrap();
+    mount::create_bind(source.as_fd(), target.as_fd(), &DEFAULT, unique()).unwrap();
+    assert_eq!(
+        errno_of(&fs::write(consumer.join("a/after"), "w").unwrap_err()),
+        libc::EROFS
+    );
+}
+
+#[test]
+#[ignore = "requires mount privileges; run scripts/integration-tests.sh"]
+fn read_only_bind_of_view_does_not_restrict_members() {
+    // A consumer binding the view read-only still gets writable member mounts
+    // if the group is read-write: read-only applies per mount, not to mounts
+    // beneath it. Only the group's read_only setting restricts members.
+    let sb = Sandbox::new();
+    sb.write("src/a/workspace/f", "f");
+    let view = sb.make_shared_anchor("view");
+    let consumer = sb.attach_consumer(&view, "container/group");
+    rustix::mount::mount_remount(
+        consumer.as_path(),
+        MountFlags::BIND | MountFlags::RDONLY,
+        "",
+    )
+    .unwrap();
+    let source_root = sb.open_root("src");
+    let target_root = sb.open_root("view");
+    let source = fsops::resolve_dir(source_root.as_fd(), "a/workspace").unwrap();
+    let target = fsops::ensure_dirs_beneath(target_root.as_fd(), &["a".into()]).unwrap();
+    let loose = MountAttrs {
+        read_only: false,
+        noexec: false,
+        nosymfollow: false,
+    };
+    mount::create_bind(source.as_fd(), target.as_fd(), &loose, unique()).unwrap();
+    assert_eq!(
+        errno_of(&fs::create_dir(consumer.join("new-dir")).unwrap_err()),
+        libc::EROFS,
+        "the view directory itself is read-only"
+    );
+    assert!(fs::write(consumer.join("a/written"), "w").is_ok());
 }
 
 #[test]

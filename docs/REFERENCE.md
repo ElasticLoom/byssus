@@ -62,7 +62,7 @@ name may be defined only once across all files.
 | `target_root` | yes | Absolute path of the trusted root beneath which views are mounted. |
 | `target` | yes | Relative template beneath `target_root`; must contain `{name}`. |
 | `membership` | yes | Absolute path of the membership directory. |
-| `read_only` | no | Default `true`. |
+| `read_only` | no | Default `true`. When `false`, every consumer of the group can create, modify and delete files in every member's source directory, subject to ordinary file permissions for the consumer's own user. Only this setting restricts writes: binding the view read-only in a container does not make member mounts read-only. |
 | `noexec` | no | Default `true`. Set `false` only if exposed files must be executable. |
 | `nosymfollow` | no | Default `false`. When `true`, symlinks inside views are not followed. |
 
@@ -222,7 +222,7 @@ connected to the systemd journal (`JOURNAL_STREAM` matches), timestamps are
 omitted because the journal records them.
 
 Every mount-affecting operation logs: group, member name, source, target,
-operation (`mount`, `unmount`, `reattr`, `skip`, `reject`, `conflict`),
+operation (`mount`, `unmount`, `drop_record`, `skip`, `reject`, `reject_cleared`, `conflict`, `degrade`),
 trigger (`startup`, `inotify`, `resync`, `reload`, `cli`) and result.
 
 ```

@@ -290,7 +290,7 @@ fn configuration_change_moves_and_restricts_mounts() {
     let out = d.reconcile();
     assert_success(&out);
     assert!(
-        text(&out.stderr).contains("op=reattr"),
+        text(&out.stderr).contains("reason=\"configured mount attributes changed\""),
         "{}",
         text(&out.stderr)
     );

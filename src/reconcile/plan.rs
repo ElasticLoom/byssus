@@ -7,8 +7,7 @@
 //!
 //! Execution contract (implemented by the executor):
 //!
-//! - Steps run in order. Unmounts and record drops come first, then attribute
-//!   re-application, then mounts.
+//! - Steps run in order. Unmounts and record drops come first, then mounts.
 //! - A step whose dependency failed or was skipped is skipped.
 //! - `Unmount` re-verifies identity on a pinned descriptor before unmounting,
 //!   and removes the record only on success.
@@ -165,9 +164,13 @@ pub enum UnmountReason {
     SourceChanged,
     /// The member's target collides with another member's.
     TargetCollision,
-    /// Configuration removed a restriction. Restrictions are never cleared in
-    /// place, so the mount is re-created.
-    AttributesRelaxed,
+    /// The configured attributes changed. Attributes are never changed in
+    /// place, because containers hold their own copies of propagated mounts
+    /// and would not see the change; the mount is re-created instead.
+    AttributesChanged,
+    /// The mount no longer enforces a configured restriction (changed
+    /// outside Byssus); it is re-created.
+    AttributesDrifted,
 }
 
 /// Why a record is being dropped without unmounting.
@@ -199,14 +202,6 @@ pub enum Action {
         /// Why.
         reason: DropReason,
     },
-    /// Add missing restrictions to an existing mount of ours and record the
-    /// configured attributes. Never clears a restriction.
-    Reattr {
-        /// The mount's record.
-        record: MountRecord,
-        /// Configured attributes to enforce.
-        attrs: MountAttrs,
-    },
     /// Create a mount and record it.
     Mount {
         /// What to mount.
@@ -218,8 +213,7 @@ impl Action {
     const fn phase(&self) -> u8 {
         match self {
             Self::Unmount { .. } | Self::DropRecord { .. } => 0,
-            Self::Reattr { .. } => 1,
-            Self::Mount { .. } => 2,
+            Self::Mount { .. } => 1,
         }
     }
 }
@@ -592,28 +586,27 @@ fn plan_recorded_member(
     match target {
         TargetState::Mounted { identity, attrs } if identity.matches(&record.identity()) => {
             match source {
-                // Row 4: ours. Loosened configuration needs a fresh mount;
-                // tightened configuration or drift is fixed in place.
+                // Row 4: ours. Any attribute change or drift is applied by
+                // re-creating the mount: mount attributes do not propagate,
+                // so an in-place change would not reach containers' copies,
+                // whereas an unmount and a new mount both do.
                 SourceState::Resolved(root) if root == record.identity().root => {
-                    if d.attrs.relaxes(&record.attrs()) {
+                    let reason = if record.attrs() != d.attrs {
+                        Some(UnmountReason::AttributesChanged)
+                    } else if attrs.is_some_and(|a| !a.enforce(&d.attrs)) {
+                        Some(UnmountReason::AttributesDrifted)
+                    } else {
+                        None
+                    };
+                    if let Some(reason) = reason {
                         let id = b.push(
                             Action::Unmount {
                                 record: record.clone(),
-                                reason: UnmountReason::AttributesRelaxed,
+                                reason,
                             },
                             vec![],
                         );
                         b.push(Action::Mount { desired: d.clone() }, vec![id]);
-                    } else if record.attrs() != d.attrs
-                        || attrs.is_some_and(|a| !a.enforce(&d.attrs))
-                    {
-                        b.push(
-                            Action::Reattr {
-                                record: record.clone(),
-                                attrs: d.attrs,
-                            },
-                            vec![],
-                        );
                     }
                 }
                 // Row 5: source replaced; remount.

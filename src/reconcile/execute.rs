@@ -101,7 +101,6 @@ impl<S: StateSink> Executor<'_, S> {
             Action::Mount { desired } => self.mount(desired),
             Action::Unmount { record, reason } => self.unmount(record, reason),
             Action::DropRecord { record, reason } => self.drop_record(record, reason),
-            Action::Reattr { record, attrs } => self.reattr(record, *attrs),
         }
     }
 
@@ -282,46 +281,6 @@ impl<S: StateSink> Executor<'_, S> {
         }
         into_result(result)
     }
-
-    fn reattr(&mut self, record: &MountRecord, attrs: crate::config::MountAttrs) -> StepResult {
-        let unique = self.unique_supported;
-        let target = record.target_location();
-        let result = (|| {
-            let root = self.runtime.roots.get(&target.root)?;
-            mount::add_restrictions(root, &target.path, &record.identity(), &attrs, unique)
-                .map_err(|e| e.to_string())?;
-            let mut updated = record.clone();
-            updated.read_only = attrs.read_only;
-            updated.noexec = attrs.noexec;
-            updated.nosymfollow = attrs.nosymfollow;
-            self.state.insert(updated);
-            self.persist()
-        })();
-        let trigger = self.trigger;
-        match &result {
-            Ok(()) => tracing::info!(
-                op = "reattr",
-                group = %record.group,
-                name = %record.name,
-                target = %target,
-                trigger = %trigger,
-                result = "ok",
-                read_only = attrs.read_only,
-                noexec = attrs.noexec,
-                nosymfollow = attrs.nosymfollow,
-            ),
-            Err(error) => tracing::error!(
-                op = "reattr",
-                group = %record.group,
-                name = %record.name,
-                target = %target,
-                trigger = %trigger,
-                result = "failed",
-                error = %error,
-            ),
-        }
-        into_result(result)
-    }
 }
 
 fn into_result(result: Result<(), String>) -> StepResult {
@@ -351,7 +310,8 @@ fn describe_unmount(reason: &UnmountReason) -> String {
         UnmountReason::SourceGone(e) => format!("source unavailable: {e}"),
         UnmountReason::SourceChanged => "source directory replaced".into(),
         UnmountReason::TargetCollision => "target collides with another member".into(),
-        UnmountReason::AttributesRelaxed => "configuration removed a restriction".into(),
+        UnmountReason::AttributesChanged => "configured mount attributes changed".into(),
+        UnmountReason::AttributesDrifted => "mount no longer enforces configured attributes".into(),
     }
 }
 
@@ -362,7 +322,6 @@ fn log_skipped(action: &Action, trigger: Trigger) {
         Action::DropRecord { record, .. } => {
             ("drop_record", record.key(), record.target_location())
         }
-        Action::Reattr { record, .. } => ("reattr", record.key(), record.target_location()),
     };
     tracing::warn!(
         op = op,
