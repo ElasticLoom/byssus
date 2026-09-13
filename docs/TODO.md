@@ -67,8 +67,10 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [ ] `config`: expose path checks separately so they run after privilege normalization (startup step order in DESIGN.md)
 - [x] `lock`: state directory `flock`
 - [x] `state`: state I/O through a state-directory descriptor (`openat`/`renameat`/`fsync`)
-- [ ] Integration test harness: `scripts/integration-tests.sh` running tests in `unshare --user --map-root-user --mount`
-- [ ] Integration tests for each kernel-layer operation (including no-recursive-submount and attribute enforcement)
+- [x] Integration test harness: `scripts/integration-tests.sh` running tests in `unshare --user --map-root-user --mount`
+- [x] Integration tests for each kernel-layer operation (including no-recursive-submount and attribute enforcement)
+
+- [ ] Integration test for service-user switching needs real root (see M6 real-root tier); user namespaces cannot map a second UID without `newuidmap`
 
 ## M3 — Reconciler and CLI
 

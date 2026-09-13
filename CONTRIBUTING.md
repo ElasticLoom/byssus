@@ -38,7 +38,10 @@ so they need no host root and cannot leave mounts behind:
 scripts/integration-tests.sh
 ```
 
-(The harness is being built as part of milestone M2; see TODO.md.)
+Extra arguments are passed to the test binary, for example
+`scripts/integration-tests.sh --nocapture kernel::`. If unprivileged user
+namespaces are disabled (for example by AppArmor on Ubuntu 24.04), the script
+explains how to enable them for a local run.
 
 ## Guidelines
 
