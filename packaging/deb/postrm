@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+remove | purge)
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+
+if [ "$1" = purge ]; then
+    # Remove state only if it records no mounts: deleting the record of live
+    # mounts would leave them unmanageable by a later reinstall.
+    state=/var/lib/byssus/state.json
+    if [ ! -e "$state" ] || grep -q '"mounts": \[\]' "$state"; then
+        rm -rf /var/lib/byssus
+    else
+        echo "byssus: keeping /var/lib/byssus because state.json still records mounts" >&2
+    fi
+    rmdir /etc/byssus/conf.d /etc/byssus 2>/dev/null || true
+    # The byssus system user is intentionally left in place.
+fi
+
+exit 0

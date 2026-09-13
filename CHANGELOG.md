@@ -27,6 +27,9 @@ and this project adheres to
   atomically written state file.
 - Hardened systemd unit, propagation anchor example, sysusers configuration,
   example configuration, operations guide and design document.
+- `.deb` and `.rpm` packages for `x86_64` and `aarch64`, tested by installing,
+  upgrading and removing them in containers and by running the packaged unit
+  on a real systemd host.
 - Namespace-isolated integration test suite (`scripts/integration-tests.sh`).
 - CI (format, lints, tests, docs, MSRV, static builds with smoke tests,
   cargo-deny, packaging) and a release workflow with provenance attestation.

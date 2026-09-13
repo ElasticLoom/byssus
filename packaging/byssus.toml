@@ -1,0 +1,20 @@
+# /etc/byssus/byssus.toml — main Byssus configuration.
+#
+# Must stay owned by root and not group- or world-writable. Define groups in
+# drop-in files under /etc/byssus/conf.d/ (one per tenant or purpose works
+# well), then check with `sudo byssus check` or `sudo byssus dry-run` and
+# reload with `sudo systemctl reload byssusd`.
+#
+# Reference: /usr/share/doc/byssus/REFERENCE.md
+# Example group: /usr/share/doc/byssus/examples/conf.d/research.toml
+
+[daemon]
+# Service user to switch to when byssusd is started as root. Not needed under
+# the packaged systemd unit, which starts it as `byssus` directly.
+# user = "byssus"
+
+# State file and lock location (the systemd unit creates this directory).
+# state_dir = "/var/lib/byssus"
+
+# Full reconcile interval in seconds; 0 disables.
+# resync_interval_secs = 60

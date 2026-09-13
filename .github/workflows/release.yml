@@ -67,10 +67,23 @@ jobs:
           cp -r contrib examples "dist/$name/"
           mkdir -p "dist/$name/docs" && cp docs/OPERATIONS.md docs/DESIGN.md "dist/$name/docs/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+        with:
+          tool: cargo-deb@3.8.0,cargo-generate-rpm@0.21.0
+      - name: Build packages
+        run: scripts/package.sh ${{ matrix.target }}
+      - name: Test packages
+        if: startsWith(matrix.target, 'x86_64-')
+        run: |
+          scripts/test-packages.sh
+          sudo BYSSUS_E2E_DISPOSABLE_HOST=1 scripts/test-systemd-host.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.target }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
 
   release:
@@ -89,17 +102,20 @@ jobs:
       - name: Checksums
         run: |
           cd dist
-          sha256sum -- *.tar.gz > SHA256SUMS
+          sha256sum -- *.tar.gz *.deb *.rpm > SHA256SUMS
           cat SHA256SUMS
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*.tar.gz
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+          gh release create "$TAG" dist/*.tar.gz dist/*.deb dist/*.rpm dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
             --verify-tag \

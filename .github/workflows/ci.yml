@@ -88,6 +88,30 @@ jobs:
           BYSSUS_REQUIRE_SUBIDS: "1"
         run: scripts/integration-tests.sh
 
+  packages:
+    name: Packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+        with:
+          tool: cargo-deb@3.8.0,cargo-generate-rpm@0.21.0
+      - name: Build packages
+        run: scripts/package.sh x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+      - name: Install, upgrade and remove in Ubuntu and Fedora containers
+        run: scripts/test-packages.sh
+      # The runner boots systemd and is discarded after the job, so the package
+      # and hardened unit can be exercised end to end as root.
+      - name: End-to-end on the runner's systemd
+        run: sudo BYSSUS_E2E_DISPOSABLE_HOST=1 scripts/test-systemd-host.sh
+
   docs:
     name: Docs
     runs-on: ubuntu-24.04

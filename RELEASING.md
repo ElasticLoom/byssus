@@ -21,7 +21,9 @@ Releases are cut from `main` by a maintainer.
 
    The `Release` workflow checks that the tag matches the crate version,
    builds static `x86_64` and `aarch64` musl binaries, smoke-tests them,
-   packages them with the documentation and `contrib/` files, generates
+   packages them as archives (with the documentation and `contrib/` files) and
+   as `.deb` and `.rpm` packages, tests the `x86_64` packages in Ubuntu and
+   Fedora containers and end to end on the runner's systemd, generates
    `SHA256SUMS`, attests build provenance and creates a **draft** GitHub
    release.
 

@@ -19,3 +19,4 @@
 # Local agent/tooling state
 .claude/
 CLAUDE.local.md
+/dist/

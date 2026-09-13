@@ -43,6 +43,18 @@ Extra arguments are passed to the test binary, for example
 namespaces are disabled (for example by AppArmor on Ubuntu 24.04), the script
 explains how to enable them for a local run.
 
+### Packages
+
+```bash
+cargo install --locked cargo-deb cargo-generate-rpm
+scripts/package.sh                         # x86_64 .deb and .rpm in dist/
+scripts/test-packages.sh                   # install/upgrade/remove in Ubuntu and Fedora containers (docker)
+```
+
+`scripts/test-systemd-host.sh` installs the `.deb` and runs the service on a
+real systemd host as root. It modifies the machine, so run it only on a
+disposable VM (CI runs it on each push).
+
 ### Playground
 
 To try Byssus by hand, start an interactive shell with a sample deployment, a

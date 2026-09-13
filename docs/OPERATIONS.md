@@ -10,8 +10,9 @@ for attaching containers and integrating an application, see
 ## Contents
 
 - [Requirements](#requirements)
-- [Install the binaries](#install-the-binaries)
-- [Create the service user](#create-the-service-user)
+- [Install](#install)
+  - [From a package](#from-a-package)
+  - [From source](#from-source)
 - [Lay out directories and permissions](#lay-out-directories-and-permissions)
 - [Create the propagation anchor](#create-the-propagation-anchor)
 - [Configure groups](#configure-groups)
@@ -32,9 +33,42 @@ for attaching containers and integrating an application, see
 - Containers must run in the host's mount namespace hierarchy — Docker Desktop
   on macOS or Windows is not supported.
 
-## Install the binaries
+## Install
 
-From a source checkout:
+### From a package
+
+Releases on GitHub provide `.deb` and `.rpm` packages for `x86_64`/`amd64`
+and `aarch64`/`arm64`, plus `SHA256SUMS`. Verify and install:
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify byssus_<version>-1_amd64.deb --repo ElasticLoom/byssus   # optional
+
+sudo apt install ./byssus_<version>-1_amd64.deb     # Debian, Ubuntu
+sudo dnf install ./byssus-<version>-1.x86_64.rpm    # Fedora, RHEL
+```
+
+The package:
+
+- installs `/usr/bin/byssusd` and `/usr/bin/byssus` (static binaries, no
+  dependencies);
+- installs the hardened unit as `/usr/lib/systemd/system/byssusd.service`;
+- creates the `byssus` system user and group, `/var/lib/byssus` (mode
+  `0750`) and `/etc/byssus/conf.d`;
+- installs a group-less `/etc/byssus/byssus.toml`, kept across upgrades if
+  you edit it;
+- installs documentation and examples under `/usr/share/doc/byssus/`;
+- does **not** enable or start the daemon.
+
+Upgrading a package restarts a running daemon; mounts are preserved.
+Removing it stops and disables the daemon but leaves its mounts in place (see
+[Removing Byssus](#removing-byssus)). Purging a `.deb` also removes
+`/var/lib/byssus` if the state file records no mounts.
+
+With a package installed, skip to
+[Lay out directories and permissions](#lay-out-directories-and-permissions).
+
+### From source
 
 ```bash
 rustup target add x86_64-unknown-linux-musl     # or aarch64-unknown-linux-musl
@@ -45,11 +79,9 @@ install -o root -g root -m 0755 target/x86_64-unknown-linux-musl/release/byssus 
 ```
 
 Both binaries are statically linked. Do not add file capabilities when using
-systemd.
+systemd. To build packages instead, run `scripts/package.sh`.
 
-## Create the service user
-
-With systemd-sysusers:
+Then create the service user, with systemd-sysusers:
 
 ```bash
 install -m 0644 contrib/sysusers.d/byssus.conf /usr/lib/sysusers.d/byssus.conf
@@ -173,9 +205,16 @@ error.
 
 ## Run under systemd
 
+Packages install the unit already. For a source install:
+
 ```bash
 install -m 0644 contrib/systemd/byssusd.service /etc/systemd/system/byssusd.service
 systemctl daemon-reload
+```
+
+Then:
+
+```bash
 systemctl enable --now byssusd
 journalctl -u byssusd -f
 ```

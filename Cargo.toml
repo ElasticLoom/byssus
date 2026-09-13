@@ -3,7 +3,7 @@ name = "byssus"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Live, read-only filesystem attachments between isolated workspaces via bind mounts and mount propagation"
+description = "Live, read-only filesystem attachments between isolated workspaces"
 authors = ["James Golovich <james@gnuinter.net>"]
 license = "Apache-2.0"
 repository = "https://github.com/ElasticLoom/byssus"
@@ -25,10 +25,72 @@ include = [
     "/CHANGELOG.md",
     "/SECURITY.md",
     "/RELEASING.md",
+    "/packaging/**",
 ]
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+# Packages: built by scripts/package.sh from static musl binaries. See
+# packaging/ for the packaged configuration and maintainer scripts.
+[package.metadata.deb]
+maintainer = "James Golovich <james@gnuinter.net>"
+copyright = "Byssus contributors"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+Byssus gives a group of isolated workspaces a live, read-only view of each \
+other's directories using bind mounts and mount propagation. Membership is \
+declared by creating or deleting empty files. The package installs the \
+byssusd daemon, the byssus CLI, a hardened systemd unit and the service \
+user; it does not enable or start the daemon."""
+section = "admin"
+priority = "optional"
+revision = "1"
+maintainer-scripts = "packaging/deb"
+assets = [
+    ["target/release/byssusd", "usr/bin/", "755"],
+    ["target/release/byssus", "usr/bin/", "755"],
+    ["target/package/byssusd.service", "usr/lib/systemd/system/byssusd.service", "644"],
+    ["contrib/sysusers.d/byssus.conf", "usr/lib/sysusers.d/byssus.conf", "644"],
+    ["packaging/byssus.toml", "etc/byssus/byssus.toml", "644"],
+    ["README.md", "usr/share/doc/byssus/README.md", "644"],
+    ["CHANGELOG.md", "usr/share/doc/byssus/CHANGELOG.md", "644"],
+    ["docs/OPERATIONS.md", "usr/share/doc/byssus/OPERATIONS.md", "644"],
+    ["docs/INTEGRATION.md", "usr/share/doc/byssus/INTEGRATION.md", "644"],
+    ["docs/REFERENCE.md", "usr/share/doc/byssus/REFERENCE.md", "644"],
+    ["docs/DESIGN.md", "usr/share/doc/byssus/DESIGN.md", "644"],
+    ["docs/DECISIONS.md", "usr/share/doc/byssus/DECISIONS.md", "644"],
+    ["examples/byssus.toml", "usr/share/doc/byssus/examples/byssus.toml", "644"],
+    ["examples/conf.d/research.toml", "usr/share/doc/byssus/examples/conf.d/research.toml", "644"],
+    ["contrib/systemd/srv-example-groups.mount", "usr/share/doc/byssus/examples/srv-example-groups.mount", "644"],
+]
+
+[package.metadata.generate-rpm]
+release = "1"
+summary = "Live, read-only filesystem attachments between isolated workspaces"
+url = "https://github.com/ElasticLoom/byssus"
+auto-req = "no"
+post_install_script = "packaging/rpm/post.sh"
+pre_uninstall_script = "packaging/rpm/preun.sh"
+post_uninstall_script = "packaging/rpm/postun.sh"
+assets = [
+    { source = "target/release/byssusd", dest = "/usr/bin/byssusd", mode = "755" },
+    { source = "target/release/byssus", dest = "/usr/bin/byssus", mode = "755" },
+    { source = "target/package/byssusd.service", dest = "/usr/lib/systemd/system/byssusd.service", mode = "644" },
+    { source = "contrib/sysusers.d/byssus.conf", dest = "/usr/lib/sysusers.d/byssus.conf", mode = "644" },
+    { source = "packaging/byssus.toml", dest = "/etc/byssus/byssus.toml", mode = "644", config = "noreplace" },
+    { source = "LICENSE", dest = "/usr/share/licenses/byssus/LICENSE", mode = "644", doc = true },
+    { source = "README.md", dest = "/usr/share/doc/byssus/README.md", mode = "644", doc = true },
+    { source = "CHANGELOG.md", dest = "/usr/share/doc/byssus/CHANGELOG.md", mode = "644", doc = true },
+    { source = "docs/OPERATIONS.md", dest = "/usr/share/doc/byssus/OPERATIONS.md", mode = "644", doc = true },
+    { source = "docs/INTEGRATION.md", dest = "/usr/share/doc/byssus/INTEGRATION.md", mode = "644", doc = true },
+    { source = "docs/REFERENCE.md", dest = "/usr/share/doc/byssus/REFERENCE.md", mode = "644", doc = true },
+    { source = "docs/DESIGN.md", dest = "/usr/share/doc/byssus/DESIGN.md", mode = "644", doc = true },
+    { source = "docs/DECISIONS.md", dest = "/usr/share/doc/byssus/DECISIONS.md", mode = "644", doc = true },
+    { source = "examples/byssus.toml", dest = "/usr/share/doc/byssus/examples/byssus.toml", mode = "644", doc = true },
+    { source = "examples/conf.d/research.toml", dest = "/usr/share/doc/byssus/examples/conf.d/research.toml", mode = "644", doc = true },
+    { source = "contrib/systemd/srv-example-groups.mount", dest = "/usr/share/doc/byssus/examples/srv-example-groups.mount", mode = "644", doc = true },
+]
 
 [[bin]]
 name = "byssusd"

@@ -103,7 +103,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 ## M5 — Deployment artifacts and documentation
 
 - [x] `contrib/systemd/byssusd.service` (no namespace-creating options; each option checked against systemd 255 `systemd.exec(5)`; `systemd-analyze security` exposure 2.6; seccomp filter exercised by running the unit tests under it via `systemd-run --user`)
-- [ ] Validate the unit end to end on a real systemd host as root (start, mount, reload, stop)
+- [~] Validate the unit end to end on a real systemd host as root (start, mount, reload, stop) — `scripts/test-systemd-host.sh` runs in CI on the runner's systemd; mark done once it passes there
 - [x] Verify `StateDirectory=` does not create a mount namespace; use it if safe
 - [x] Persistent shared anchor mount example (systemd `.mount` unit with `bind,shared`; fstab equivalent documented)
 - [x] `contrib/sysusers.d/byssus.conf`
@@ -113,9 +113,11 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] `--help` completeness review
 - [ ] Man pages (e.g. generated from the clap definitions)
 
+- [x] `.deb` and `.rpm` packages (`scripts/package.sh`), with container install/upgrade/remove tests (`scripts/test-packages.sh`)
+
 ## M6 — Release engineering and publication
 
-- [x] Release workflow: tagged builds of static musl binaries (x86_64, aarch64), version/tag check, smoke tests, archives with docs and contrib, SHA256SUMS, draft GitHub release
+- [x] Release workflow: tagged builds of static musl binaries (x86_64, aarch64), version/tag check, smoke tests, archives with docs and contrib, `.deb`/`.rpm` packages, SHA256SUMS, draft GitHub release
 - [ ] Exercise the release workflow once (e.g. with a pre-release tag) after the repository is public
 - [x] Build provenance / artifact attestation for release archives
 - [x] Smoke-test binaries in CI (aarch64 under qemu-user)
@@ -127,6 +129,9 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [ ] Make repository public; publish 0.1.0 to crates.io
 
 ## Deferred / future (not scheduled)
+
+- [ ] Hosted apt/yum repositories (signing keys and hosting), if users ask for them
+- [ ] Test the `aarch64` packages by installing them (currently built but only the `x86_64` packages are installed in tests)
 
 - [ ] Daemon-written status snapshot `/run/byssus/status.json` (only if a use case appears; would also let integrations confirm that the latest reload was accepted without reading logs)
 - [ ] JSON log format
