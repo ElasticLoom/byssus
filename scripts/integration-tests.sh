@@ -40,5 +40,20 @@ fi
 
 export BYSSUS_TEST_NAMESPACE=1
 export BYSSUS_TEST_BIN_DIR="$PWD/target/debug"
-exec unshare --user --map-root-user --mount --propagation private -- \
-    "$binary" --ignored --test-threads=1 "$@"
+
+# Map a range of subordinate IDs as well as root when possible, so tests can
+# switch to an unprivileged service user inside the namespace. This needs
+# newuidmap/newgidmap and entries in /etc/subuid and /etc/subgid.
+map_args=(--map-root-user)
+skip_args=()
+if unshare --user --map-root-user --map-auto --mount true 2>/dev/null; then
+    map_args=(--map-root-user --map-auto)
+    export BYSSUS_TEST_SUBIDS=1
+else
+    echo "warning: subordinate UIDs unavailable; skipping service_user:: tests" >&2
+    echo "         (configure /etc/subuid and /etc/subgid for $(id -un) to run them)" >&2
+    skip_args=(--skip service_user::)
+fi
+
+exec unshare --user "${map_args[@]}" --mount --propagation private -- \
+    "$binary" --ignored --test-threads=1 "${skip_args[@]}" "$@"

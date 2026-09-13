@@ -24,6 +24,7 @@ include = [
     "/LICENSE",
     "/CHANGELOG.md",
     "/SECURITY.md",
+    "/RELEASING.md",
 ]
 
 [package.metadata.docs.rs]

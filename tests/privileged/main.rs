@@ -12,3 +12,4 @@ mod common;
 mod daemon;
 mod kernel;
 mod privileges;
+mod service_user;

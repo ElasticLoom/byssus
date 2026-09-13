@@ -70,7 +70,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Integration test harness: `scripts/integration-tests.sh` running tests in `unshare --user --map-root-user --mount`
 - [x] Integration tests for each kernel-layer operation (including no-recursive-submount and attribute enforcement)
 
-- [ ] Integration test for service-user switching needs real root (see M6 real-root tier); user namespaces cannot map a second UID without `newuidmap`
+- [x] Integration test for service-user switching (via `--map-auto` subordinate UIDs)
 
 ## M3 — Reconciler and CLI
 
@@ -114,12 +114,14 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 
 ## M6 — Release engineering and publication
 
-- [ ] Release workflow: tagged builds of static musl binaries (x86_64, aarch64), checksums, GitHub release
-- [ ] Build provenance / artifact attestation for release binaries
-- [ ] Smoke-test the aarch64 binary (e.g. under qemu-user) in CI
-- [ ] Real-root test tier (`sudo`) for service-user switching
+- [x] Release workflow: tagged builds of static musl binaries (x86_64, aarch64), version/tag check, smoke tests, archives with docs and contrib, SHA256SUMS, draft GitHub release
+- [ ] Exercise the release workflow once (e.g. with a pre-release tag) after the repository is public
+- [x] Build provenance / artifact attestation for release archives
+- [x] Smoke-test binaries in CI (aarch64 under qemu-user)
+- [x] Service-user switching tests using subordinate UIDs in the test namespace (`service_user::`), no host root required
 - [ ] Decide on and run integration tests in CI (userns on GitHub runners)
 - [ ] Security review of the full codebase before first release
+- [x] Document the release process in `RELEASING.md`
 - [ ] Make repository public; publish 0.1.0 to crates.io
 
 ## Deferred / future (not scheduled)

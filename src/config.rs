@@ -1044,7 +1044,12 @@ membership = "/b"
         .unwrap();
         assert!(loaded.warnings.is_empty());
         assert_eq!(loaded.config.daemon.user.as_deref(), Some("byssus"));
-        assert!(loaded.config.groups.contains_key(&Name::new("research").unwrap()));
+        assert!(
+            loaded
+                .config
+                .groups
+                .contains_key(&Name::new("research").unwrap())
+        );
     }
 
     #[test]

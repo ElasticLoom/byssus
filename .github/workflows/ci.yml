@@ -123,6 +123,18 @@ jobs:
             file "$f"
             file "$f" | grep -Eq 'statically linked|static-pie linked'
           done
+      - name: Smoke test
+        run: |
+          dir="target/${{ matrix.target }}/release"
+          case "${{ matrix.target }}" in
+            aarch64-*)
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq qemu-user-static
+              runner=qemu-aarch64-static ;;
+            *) runner= ;;
+          esac
+          $runner "$dir/byssus" version
+          $runner "$dir/byssusd" --version
 
   deny:
     name: cargo-deny

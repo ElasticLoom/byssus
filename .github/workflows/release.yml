@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - name: Check tag matches crate version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          if [[ "$TAG" != "v$version" ]]; then
+            echo "tag $TAG does not match Cargo.toml version $version" >&2
+            exit 1
+          fi
+      - run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Verify static linking
+        run: |
+          for bin in byssusd byssus; do
+            file "target/${{ matrix.target }}/release/$bin" | grep -Eq 'statically linked|static-pie linked'
+          done
+      - name: Smoke test
+        run: |
+          dir="target/${{ matrix.target }}/release"
+          case "${{ matrix.target }}" in
+            aarch64-*)
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq qemu-user-static
+              runner=qemu-aarch64-static ;;
+            *) runner= ;;
+          esac
+          $runner "$dir/byssus" version
+          $runner "$dir/byssusd" --version
+      - name: Package
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          name="byssus-${TAG}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp target/${{ matrix.target }}/release/byssusd target/${{ matrix.target }}/release/byssus "dist/$name/"
+          cp LICENSE README.md CHANGELOG.md "dist/$name/"
+          cp -r contrib examples "dist/$name/"
+          mkdir -p "dist/$name/docs" && cp docs/OPERATIONS.md docs/DESIGN.md "dist/$name/docs/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Draft GitHub release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --verify-tag \
+            --title "Byssus $TAG" \
+            --generate-notes

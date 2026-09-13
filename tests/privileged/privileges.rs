@@ -8,9 +8,14 @@ use crate::common::require_test_namespace;
 
 /// Runs `f` in a forked, single-threaded child and returns its exit status.
 fn in_child(f: fn() -> i32) -> i32 {
-    // SAFETY: the child only calls async-signal-tolerant code paths in
-    // practice (no locks are held by other threads at fork time in these
-    // single-purpose tests) and exits with `_exit` without unwinding.
+    in_child_with(f)
+}
+
+/// Like [`in_child`] but accepts a closure.
+pub fn in_child_with<F: FnOnce() -> i32 + std::panic::UnwindSafe>(f: F) -> i32 {
+    // SAFETY: the test harness runs with --test-threads=1, and the child only
+    // runs the given test code before exiting with `_exit`, never returning
+    // into the harness.
     let pid = unsafe { libc::fork() };
     assert!(pid >= 0, "fork failed");
     if pid == 0 {
