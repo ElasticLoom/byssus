@@ -16,10 +16,11 @@ Requirements: Linux, Rust (latest stable; the minimum supported version is set
 by `rust-version` in `Cargo.toml`).
 
 ```bash
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+scripts/check.sh           # format, clippy, unit tests, docs, MSRV, cargo-deny, shellcheck
+scripts/check.sh --full    # also integration tests and packages
 ```
+
+Run `scripts/check.sh` before pushing; it mirrors CI's fast jobs.
 
 Static release builds:
 

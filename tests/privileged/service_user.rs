@@ -46,12 +46,13 @@ impl FakeUser {
         ] {
             // Replace any real `byssus` entry (for example from an installed
             // package) so the tests do not depend on the host.
-            let mut content: String = fs::read_to_string(file)
-                .unwrap_or_default()
-                .lines()
-                .filter(|l| !l.starts_with("byssus:"))
-                .map(|l| format!("{l}\n"))
-                .collect();
+            let mut content = String::new();
+            for existing in fs::read_to_string(file).unwrap_or_default().lines() {
+                if !existing.starts_with("byssus:") {
+                    content.push_str(existing);
+                    content.push('\n');
+                }
+            }
             content.push_str(&line);
             let copy = dir.path().join(file.trim_start_matches("/etc/"));
             fs::write(&copy, content).unwrap();
