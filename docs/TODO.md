@@ -87,14 +87,17 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 
 ## M4 — Daemon
 
-- [ ] `byssusd` argument parsing
-- [ ] Startup sequence (privileges → /proc → probes → config → lock → descriptors → propagation → state → watches/signals → reconcile)
-- [ ] `epoll` event loop: inotify, signalfd, resync timeout
-- [ ] inotify event handling: drain, coalesce into one pass, overflow → full reconcile
-- [ ] Degraded groups on membership directory deletion/move
-- [ ] Transactional `SIGHUP` reload
-- [ ] Clean shutdown on `SIGTERM`/`SIGINT` (state write, no unmount)
-- [ ] Integration tests: live membership changes, propagation into simulated container, reload scenarios, restart no-op, rapid churn
+- [x] `byssusd` argument parsing
+- [x] Startup sequence (config → privileges → probes/procfs → paths → lock/state → descriptors → propagation → signals/watches → reconcile)
+- [x] `epoll` event loop: inotify, signalfd, resync timeout
+- [x] inotify event handling: drain, debounce into one pass, overflow → full reconcile
+- [x] Degraded groups on membership directory deletion/move
+- [x] Transactional `SIGHUP` reload
+- [x] Clean shutdown on `SIGTERM`/`SIGINT` (state write, no unmount)
+- [x] Integration tests: live membership changes, propagation into simulated container, reload scenarios, restart no-op, rapid churn
+
+- [ ] systemd readiness notification (`Type=notify`, `sd_notify` READY/RELOADING/STOPPING) so dependent units start after the initial reconcile
+- [ ] Automatic recovery of degraded groups when the membership directory reappears (currently requires SIGHUP)
 
 ## M5 — Deployment artifacts and documentation
 

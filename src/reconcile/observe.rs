@@ -33,6 +33,11 @@ pub enum Note {
         /// Why.
         error: InterpolateError,
     },
+    /// The membership directory has been deleted; the group is frozen.
+    MembershipDeleted {
+        /// Group.
+        group: Name,
+    },
     /// The membership directory could not be read; the group is frozen for
     /// this pass.
     MembershipUnreadable {
@@ -74,6 +79,13 @@ pub fn observe(
 
     for (group_name, group) in &runtime.groups {
         if degraded.contains(group_name) {
+            continue;
+        }
+        if fsops::is_deleted(group.membership_dir.as_fd()).unwrap_or(false) {
+            out.frozen.insert(group_name.clone());
+            out.notes.push(Note::MembershipDeleted {
+                group: group_name.clone(),
+            });
             continue;
         }
         let membership = match fsops::scan_membership(group.membership_dir.as_fd()) {
@@ -138,6 +150,19 @@ pub fn observe(
         out.members.insert(group_name.clone(), membership.members);
     }
 
+    observe_kernel(runtime, state, unique_supported, &mut out);
+
+    out
+}
+
+/// Resolves every desired source and inspects every desired and recorded
+/// target.
+fn observe_kernel(
+    runtime: &mut Runtime,
+    state: &State,
+    unique_supported: bool,
+    out: &mut Observed,
+) {
     for d in &out.desired {
         let source = match runtime.roots.get(&d.source.root) {
             Ok(root) => match fsops::resolve_dir(root, &d.source.path) {
@@ -166,6 +191,4 @@ pub fn observe(
         };
         out.observations.targets.insert(location, observed);
     }
-
-    out
 }

@@ -111,6 +111,12 @@ pub fn log_notes(notes: &[Note], trigger: Trigger) {
                 trigger = %trigger,
                 reason = %format!("{field} template: {error}"),
             ),
+            Note::MembershipDeleted { group } => tracing::error!(
+                op = "degrade",
+                group = %group,
+                trigger = %trigger,
+                msg = "membership directory has been deleted; keeping existing mounts and making no changes to this group until configuration is reloaded",
+            ),
             Note::MembershipUnreadable { group, error } => tracing::error!(
                 op = "scan",
                 group = %group,

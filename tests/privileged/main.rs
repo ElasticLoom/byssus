@@ -9,5 +9,6 @@
 
 mod cli;
 mod common;
+mod daemon;
 mod kernel;
 mod privileges;

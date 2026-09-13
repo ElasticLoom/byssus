@@ -123,6 +123,13 @@ pub fn dev_ino(fd: BorrowedFd<'_>) -> io::Result<DevIno> {
     })
 }
 
+/// Whether the directory `fd` refers to has been deleted (its link count is
+/// zero).
+pub fn is_deleted(fd: BorrowedFd<'_>) -> io::Result<bool> {
+    let st = rustix::fs::statx(fd, "", AtFlags::EMPTY_PATH, StatxFlags::NLINK)?;
+    Ok(st.stx_nlink == 0)
+}
+
 /// Lists a membership directory through `dir` (which must be opened for
 /// reading) and classifies each entry without following symlinks.
 pub fn scan_membership(dir: BorrowedFd<'_>) -> io::Result<Membership> {
@@ -255,6 +262,17 @@ mod tests {
         assert!(!remove_empty_dir(r.as_fd(), Some("p"), "gone").unwrap());
         fs::create_dir(dir.path().join("top")).unwrap();
         assert!(remove_empty_dir(r.as_fd(), None, "top").unwrap());
+    }
+
+    #[test]
+    fn detects_deleted_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("m");
+        fs::create_dir(&p).unwrap();
+        let fd = open_dir_for_reading(&p).unwrap();
+        assert!(!is_deleted(fd.as_fd()).unwrap());
+        fs::remove_dir(&p).unwrap();
+        assert!(is_deleted(fd.as_fd()).unwrap());
     }
 
     #[test]

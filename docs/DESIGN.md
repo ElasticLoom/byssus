@@ -607,18 +607,25 @@ Additional rules:
 
 ### Event loop
 
-- **inotify readable:** drain all pending events, then run one reconciliation
-  pass. Watched events: `IN_CREATE`, `IN_DELETE`,
-  `IN_MOVED_FROM`, `IN_MOVED_TO`, `IN_CLOSE_WRITE`, `IN_ATTRIB`,
-  `IN_DELETE_SELF`, `IN_MOVE_SELF`. Reconciliation always re-reads the
-  directory, so bursts of changes converge regardless of event ordering.
-- **`IN_Q_OVERFLOW`:** full reconcile of every group.
-- **`IN_DELETE_SELF` / `IN_MOVE_SELF` / `IN_IGNORED`** (membership directory
-  removed or replaced): mark the group *degraded* — keep its existing mounts,
-  log an error, and make no further changes to it until a successful reload
-  re-opens the directory. Accidentally deleting a membership directory must
-  not mass-unmount a group; groups are removed through configuration.
-- **Resync timeout:** full reconcile of every non-degraded group.
+- **inotify readable:** drain all pending events. Membership changes schedule
+  a reconciliation pass after a short quiet period (150 ms, never postponed by
+  more than 1 s in total), so a burst of changes — including a membership
+  directory being deleted file by file — is handled as a whole. Watched
+  events: `IN_CREATE`, `IN_DELETE`, `IN_MOVED_FROM`, `IN_MOVED_TO`,
+  `IN_CLOSE_WRITE`, `IN_MODIFY`, `IN_ATTRIB`, `IN_DELETE_SELF`,
+  `IN_MOVE_SELF`. Reconciliation always re-reads the directory, so bursts
+  converge regardless of event ordering.
+- **`IN_Q_OVERFLOW`:** schedule a full reconcile.
+- **Membership directory lost** — moved or unmounted (`IN_MOVE_SELF`,
+  `IN_UNMOUNT`, `IN_IGNORED`), or deleted (detected before every scan by the
+  directory descriptor's link count reaching zero, since the daemon's open
+  descriptor keeps the inode alive and suppresses `IN_DELETE_SELF`): mark the
+  group *degraded* — keep its existing mounts, log an error, and make no
+  further changes to it until a successful reload re-opens the directory.
+  Accidentally moving or deleting a membership directory must not
+  mass-unmount a group; groups are removed through configuration.
+- **Resync timeout:** full reconcile of every non-degraded group. The timer
+  restarts after every pass.
 - **`SIGHUP`:** transactional reload.
 - **`SIGTERM` / `SIGINT`:** write the state file and exit 0. Mounts are **not**
   removed.
@@ -626,16 +633,18 @@ Additional rules:
 ### Reload (`SIGHUP`)
 
 1. Parse all configuration files.
-2. Fully validate, including opening every root and membership directory.
+2. Fully validate, including checking paths, opening every root and
+   membership directory, checking propagation and creating new inotify
+   watches. Changing `daemon.state_dir` is rejected (it requires a restart);
+   a changed `daemon.user` is logged and takes effect on restart.
 3. On any failure: log the error, discard the new configuration, keep running
    unchanged.
 4. On success: atomically replace the active configuration, descriptors and
-   watches.
+   watches, and clear degraded groups.
 5. Reconcile every group. Groups that were removed have all their recorded
    mounts unmounted (the "not a member" rows); new groups are reconciled from
    scratch; groups with changed roots or templates move their mounts; groups
    with changed attributes have them re-applied in place.
-6. Re-check propagation for new or changed target roots.
 
 ### Shutdown and restarts
 

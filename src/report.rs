@@ -368,6 +368,7 @@ pub fn group_reports(
                 .iter()
                 .find_map(|n| match n {
                     Note::MembershipUnreadable { group, error } if in_group(group) => Some(error.clone()),
+                    Note::MembershipDeleted { group } if in_group(group) => Some("directory has been deleted".to_owned()),
                     _ => None,
                 });
             let mut sources_valid = 0;

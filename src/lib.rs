@@ -15,6 +15,7 @@ compile_error!("byssus relies on Linux-specific mount APIs and only builds on Li
 
 pub mod app;
 pub mod config;
+pub mod daemon;
 pub mod fsops;
 pub mod identity;
 pub mod lock;
@@ -33,6 +34,7 @@ pub mod state;
 pub mod sys;
 pub mod template;
 pub mod users;
+pub mod watcher;
 
 /// The crate version, as recorded in `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

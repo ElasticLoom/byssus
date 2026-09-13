@@ -223,6 +223,9 @@ fn status(source: &ConfigSource, format: Format) -> anyhow::Result<ExitCode> {
     let unique = probe::probe_kernel().unique_mount_ids();
     let observed = observe::observe(&mut runtime, &state, &degraded, unique);
     notes.extend(observed.notes.iter().filter_map(|n| match n {
+        observe::Note::MembershipDeleted { group } => Some(format!(
+            "group '{group}': membership directory has been deleted"
+        )),
         observe::Note::MembershipUnreadable { group, error } => Some(format!(
             "group '{group}': membership directory unreadable: {error}"
         )),
