@@ -139,6 +139,8 @@ impl<S: StateSink> Executor<'_, S> {
 
     fn try_mount(&mut self, d: &DesiredMount) -> Result<(), String> {
         let unique = self.unique_supported;
+        // Resolved again, not reused from observation, so confinement is
+        // checked at use.
         let source = {
             let root = self.runtime.roots.get(&d.source.root)?;
             fsops::resolve_dir(root, &d.source.path)
