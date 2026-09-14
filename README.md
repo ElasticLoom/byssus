@@ -131,8 +131,8 @@ simulated container and `byssusd` running. Type `help` for things to try.
 - [Integration guide](docs/INTEGRATION.md) — containers and managing membership from an application
 - [Reference](docs/REFERENCE.md) — configuration, naming rules, CLI, log format
 - [Design and security contract](docs/DESIGN.md) and [design decisions](docs/DECISIONS.md)
-- [Milestones and TODO](docs/TODO.md)
-- [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Releasing](RELEASING.md)
+- [Milestones and TODO](docs/TODO.md) · [Releasing](docs/RELEASING.md)
+- [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 ## Background
 

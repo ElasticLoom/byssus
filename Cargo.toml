@@ -24,7 +24,6 @@ include = [
     "/LICENSE",
     "/CHANGELOG.md",
     "/SECURITY.md",
-    "/RELEASING.md",
     "/packaging/**",
 ]
 
