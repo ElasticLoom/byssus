@@ -105,6 +105,23 @@ jobs:
           tool: cargo-deb@3.8.0,cargo-generate-rpm@0.21.0
       - name: Build packages
         run: scripts/package.sh x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+      - name: Verify binaries are statically linked and run
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            dir="target/$target/release"
+            case "$target" in
+              aarch64-*) runner=qemu-aarch64-static ;;
+              *) runner= ;;
+            esac
+            for bin in byssusd byssus; do
+              file "$dir/$bin"
+              file "$dir/$bin" | grep -Eq 'statically linked|static-pie linked'
+            done
+            $runner "$dir/byssus" version
+            $runner "$dir/byssusd" --version
+          done
       - name: Install, upgrade and remove in Ubuntu and Fedora containers
         run: scripts/test-packages.sh
       # The runner boots systemd and is discarded after the job, so the package
@@ -149,47 +166,6 @@ jobs:
           # Newer lints may not exist on the MSRV toolchain.
           RUSTFLAGS: ""
 
-  build-musl:
-    name: Build (${{ matrix.target }})
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: ${{ matrix.target }}
-      - run: cargo build --locked --release --target ${{ matrix.target }}
-      - name: Verify binaries are statically linked
-        run: |
-          for bin in byssusd byssus; do
-            f="target/${{ matrix.target }}/release/$bin"
-            file "$f"
-            file "$f" | grep -Eq 'statically linked|static-pie linked'
-          done
-      - name: Smoke test
-        run: |
-          dir="target/${{ matrix.target }}/release"
-          case "${{ matrix.target }}" in
-            aarch64-*)
-              sudo apt-get update -qq
-              sudo apt-get install -y -qq qemu-user-static
-              runner=qemu-aarch64-static ;;
-            *) runner= ;;
-          esac
-          $runner "$dir/byssus" version
-          $runner "$dir/byssusd" --version
-
   deny:
     name: cargo-deny
     runs-on: ubuntu-24.04
@@ -200,6 +176,19 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
+
+  shellcheck:
+    name: Shell scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # shellcheck is preinstalled on GitHub's Ubuntu runners.
+      - run: |
+          shellcheck --version
+          shellcheck scripts/*.sh
+          shellcheck -s sh packaging/deb/* packaging/rpm/*.sh
 
   package:
     name: Package
