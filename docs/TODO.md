@@ -20,12 +20,12 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Lint configuration (rustc + clippy pedantic, unsafe hygiene lints)
 - [x] `rustfmt.toml`, `.gitignore`, `.editorconfig`
 - [x] `cargo-deny` configuration (licenses, advisories, bans, sources)
-- [x] GitHub Actions CI: fmt, clippy, tests, integration tests, docs, MSRV, musl builds (x86_64 + aarch64), cargo-deny
+- [x] GitHub Actions CI: fmt, clippy, tests, integration tests, docs, MSRV, musl builds (x86_64 + aarch64) in the packages job, cargo-deny, shellcheck
 - [x] Dependabot for Cargo and GitHub Actions
 - [x] `cargo publish --dry-run` packaging check in CI
 - [x] Cross-linking of static musl binaries with `rust-lld` (`.cargo/config.toml`)
-- [ ] Enable GitHub private vulnerability reporting (repository settings; only available once the repository is public)
-- [ ] Branch protection on `main` requiring CI (repository settings; GitHub only offers this for private repositories on paid plans, so enable it when the repository is public)
+- [x] Enable GitHub private vulnerability reporting
+- [x] Branch protection on `main` requiring CI ("Protect main" ruleset)
 - [ ] `CODE_OF_CONDUCT.md` (decide on text, e.g. Contributor Covenant)
 - [x] Issue and pull request templates
 - [x] `scripts/playground.sh`: interactive namespace playground
@@ -132,15 +132,17 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 ## M6 — Release engineering and publication
 
 - [x] Release workflow: tagged builds of static musl binaries (x86_64, aarch64), version/tag check, smoke tests, archives with docs and contrib, `.deb`/`.rpm` packages, SHA256SUMS, draft GitHub release
-- [ ] Exercise the release workflow once (e.g. with a pre-release tag) after the repository is public
+- [ ] Exercise the release workflow once (e.g. with a pre-release tag)
 - [x] Build provenance / artifact attestation for release archives
 - [x] Smoke-test binaries in CI (aarch64 under qemu-user)
 - [x] Service-user switching tests using subordinate UIDs in the test namespace (`service_user::`), no host root required
 - [x] Run integration tests in CI (user namespaces on GitHub runners; subordinate IDs required)
 - [x] Confirm the CI integration job passes on GitHub's runners (all 44 tests, including `service_user::`, pass on `ubuntu-24.04`)
-- [ ] Security review of the full codebase before first release (planned: performed by ElasticLoom once the repository is public)
+- [x] Security review of the full codebase by ElasticLoom
+- [ ] Re-run the ElasticLoom security analysis before the first release
 - [x] Document the release process in `RELEASING.md`
-- [ ] Make repository public; publish 0.1.0 to crates.io
+- [x] Make repository public
+- [ ] Publish 0.1.0 to crates.io
 
 ## Deferred / future (not scheduled)
 
