@@ -142,6 +142,8 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Document the release process in `docs/RELEASING.md`
 - [x] Make repository public
 - [x] Publish 0.1.0 to GitHub releases and crates.io
+- [x] Automated publishing: crates.io trusted publisher and `release` environment configured (see `docs/RELEASING.md`)
+- [ ] Confirm automated publishing with the next release
 
 ## Deferred / future (not scheduled)
 
