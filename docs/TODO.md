@@ -132,7 +132,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 ## M6 — Release engineering and publication
 
 - [x] Release workflow: tagged builds of static musl binaries (x86_64, aarch64), version/tag check, smoke tests, archives with docs and contrib, `.deb`/`.rpm` packages, SHA256SUMS, draft GitHub release
-- [ ] Exercise the release workflow once (e.g. with a pre-release tag)
+- [x] Exercise the release workflow once (0.1.0)
 - [x] Build provenance / artifact attestation for release archives
 - [x] Smoke-test binaries in CI (aarch64 under qemu-user)
 - [x] Service-user switching tests using subordinate UIDs in the test namespace (`service_user::`), no host root required
@@ -141,7 +141,7 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Security review of the full codebase by ElasticLoom
 - [x] Document the release process in `docs/RELEASING.md`
 - [x] Make repository public
-- [ ] Publish 0.1.0 to crates.io
+- [x] Publish 0.1.0 to GitHub releases and crates.io
 
 ## Deferred / future (not scheduled)
 

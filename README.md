@@ -11,9 +11,9 @@ directories, **read-only** by default. Group membership is declared by creating 
 files; the daemon turns that into bind mounts, and mount propagation carries
 them into already-running containers without restarts.
 
-> **Status: pre-release.** Byssus is a young project. The daemon and CLI are
-> functional and tested, but it has not had a release or wide deployment, and
-> configuration and behavior may still change. See
+> **Status: early.** Byssus is a young project. The daemon and CLI are
+> functional and tested, but it has not seen wide deployment, and
+> configuration and behavior may change before 1.0. See
 > [docs/TODO.md](docs/TODO.md) for remaining work and [SECURITY.md](SECURITY.md)
 > for reporting issues.
 
@@ -92,16 +92,9 @@ See [INTEGRATION.md](docs/INTEGRATION.md#groups-created-at-runtime-group-sets).
 
 ## Install
 
-Byssus has no release yet; install from source (Linux 5.12+, Rust 1.85+):
-
-```bash
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --locked --target x86_64-unknown-linux-musl
-sudo install -m 0755 target/x86_64-unknown-linux-musl/release/byssusd /usr/local/bin/
-sudo install -m 0755 target/x86_64-unknown-linux-musl/release/byssus  /usr/local/bin/
-```
-
-Releases will provide `.deb` and `.rpm` packages and static binary archives:
+Each [release](https://github.com/ElasticLoom/byssus/releases/latest)
+provides `.deb` and `.rpm` packages and static binary archives for `x86_64`
+and `aarch64`, with checksums and build provenance attestations:
 
 ```bash
 sudo apt install ./byssus_<version>-1_amd64.deb     # Debian, Ubuntu
@@ -113,6 +106,15 @@ the daemon. Then set up source directories and group configuration, confirm
 the target roots are on a shared mount (the default on systemd hosts), check with `sudo byssus dry-run`, and start with
 `sudo systemctl enable --now byssusd` — see the
 [installation and operations guide](docs/OPERATIONS.md).
+
+To build from source instead (Rust 1.85+), for example static binaries from
+[crates.io](https://crates.io/crates/byssus):
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cargo install --locked --target x86_64-unknown-linux-musl byssus
+sudo install -m 0755 ~/.cargo/bin/byssusd ~/.cargo/bin/byssus /usr/local/bin/
+```
 
 ## Try it
 
