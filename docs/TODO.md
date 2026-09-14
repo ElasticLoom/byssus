@@ -139,7 +139,6 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [x] Run integration tests in CI (user namespaces on GitHub runners; subordinate IDs required)
 - [x] Confirm the CI integration job passes on GitHub's runners (all 44 tests, including `service_user::`, pass on `ubuntu-24.04`)
 - [x] Security review of the full codebase by ElasticLoom
-- [ ] Re-run the ElasticLoom security analysis before the first release
 - [x] Document the release process in `RELEASING.md`
 - [x] Make repository public
 - [ ] Publish 0.1.0 to crates.io
@@ -153,3 +152,4 @@ See [DESIGN.md](DESIGN.md) for the specification each item implements.
 - [ ] JSON log format
 - [ ] Selective exposure of source subdirectories
 - [ ] Daemon-applied seccomp filter
+- [ ] Re-run the ElasticLoom security analysis

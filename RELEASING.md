@@ -11,7 +11,7 @@ Releases are cut from `main` by a maintainer.
      `BYSSUS_UPDATE_MAN=1 cargo test --lib cli::`.
    - Move the *Unreleased* entries in `CHANGELOG.md` under a new version
      heading with today's date.
-   - Open a pull request with these changes and merge it.
+   - Commit these changes and push them to `main`.
 
 2. **Tag**
 

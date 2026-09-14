@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-13
+
+First release.
+
 ### Added
 
 - `byssusd` daemon: watches membership directories with inotify and
@@ -43,3 +47,6 @@ and this project adheres to
 - Namespace-isolated integration test suite (`scripts/integration-tests.sh`).
 - CI (format, lints, tests, docs, MSRV, static builds with smoke tests,
   cargo-deny, packaging) and a release workflow with provenance attestation.
+
+[Unreleased]: https://github.com/ElasticLoom/byssus/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ElasticLoom/byssus/releases/tag/v0.1.0
