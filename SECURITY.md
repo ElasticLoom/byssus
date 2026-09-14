@@ -28,23 +28,65 @@ unless you prefer to remain anonymous.
 
 ## Supported versions
 
-Byssus is in early development and has not yet had a release. Once releases
-begin, security fixes will be made to the latest release.
+Security fixes are made to the most recent release.
+
+## Trust boundaries
+
+Byssus involves these parties, from most to least trusted:
+
+| Party | Trusted to | Must not be able to |
+|-------|------------|---------------------|
+| **Operator** (root) | write configuration, start the daemon, manage mounts | — |
+| **`byssusd`** (service user with only `CAP_SYS_ADMIN`) | create and remove the mounts its configuration describes | act on anything its configuration and the parties below it do not direct |
+| **`byssus` group members** (operators and monitoring tools) | read the state file and run `byssus status`, which shows every group and member name | change state, configuration, membership or mounts |
+| **Membership writer** (the application) | change the exposure of groups whose membership directory it can write | expose anything outside those groups' configured sources, affect other groups, place views outside the target root, or influence configuration or the daemon's privileges |
+| **Source owners** (users who write inside source directories) | put arbitrary files, symlinks and special files in their own source | make a view carry setuid, device or (when configured) write or exec capability, or expose mounts nested inside the source |
+| **Consumers** (containers or workspaces that see views) | read (or write, for `read_only = false` groups) the views they are given | change membership, affect host mounts, or reach anything beyond their views |
+| **Other local users** | nothing | influence Byssus at all |
+
+A report is most interesting when a party can do something its row says it
+must not. `CAP_SYS_ADMIN` is powerful: a compromised daemon could misuse
+mounts to gain much more, which is why a lower-trust party steering the
+daemon into doing so is in scope.
 
 ## Scope
 
 The [security contract](docs/DESIGN.md#security-contract) describes the
-guarantees Byssus intends to provide. Violations of any of them are in scope,
-for example:
+guarantees Byssus intends to provide. Violations of any of them are in scope.
+Classes of issue we are especially interested in:
 
-- exposing files outside a configured source, or at a location outside a
-  configured target root;
-- producing a setuid-capable or device-capable view, or a writable or
-  executable one when the group is configured `read_only` or `noexec`;
-- exposing nested mounts from within a source;
-- unmounting or modifying a mount Byssus did not create;
-- retaining capabilities or privileges beyond those documented.
+- **Confinement escapes:** a member name, template or directory layout that
+  exposes files outside a configured source, or places a view outside its
+  target root or in another group's space.
+- **Races an unprivileged party can win:** renames, symlink swaps or directory
+  replacement during membership scanning, source resolution, mount creation or
+  unmounting.
+- **Weakened views:** a view that is ever setuid- or device-capable, or
+  writable, executable or symlink-following when configured otherwise, or that
+  exposes nested mounts.
+- **Mount ownership confusion:** unmounting, replacing or modifying a mount
+  Byssus did not create.
+- **Propagation leaks:** mounts made by a consumer reaching the host, or views
+  reaching places they were not configured for.
+- **Privilege normalization flaws:** capabilities, user or group IDs,
+  securebits or `no_new_privs` left other than documented.
+- **Configuration and state trust:** loading configuration that fails the
+  ownership checks, state that makes Byssus act on mounts it does not own, or
+  state readable outside the `byssus` group.
+- **Memory safety** in the small `unsafe` system call layer.
+- **Denial of service across a boundary:** a membership writer, source owner
+  or consumer crashing or hanging the daemon, or stopping other groups from
+  being reconciled.
 
-Out of scope: consequences of deliberately insecure deployment, such as
-granting untrusted users write access to membership directories or
-configuration.
+Out of scope:
+
+- Actions that require root, `CAP_SYS_ADMIN` in the host mount namespace, or
+  write access to configuration or the state directory: those parties can
+  already do anything Byssus can. Hardening suggestions in this area are
+  welcome as regular issues.
+- Consequences of a deliberately insecure deployment, such as giving consumers
+  write access to membership directories, or using `read_only = false` groups
+  with consumers who are not trusted to change every member.
+- A membership writer disrupting only its own group.
+- Kernel vulnerabilities, which should be reported upstream. Incorrect use of
+  kernel interfaces by Byssus is in scope.

@@ -11,9 +11,11 @@ directories, **read-only** by default. Group membership is declared by creating 
 files; the daemon turns that into bind mounts, and mount propagation carries
 them into already-running containers without restarts.
 
-> **Status: pre-release.** The daemon and CLI are functional and tested, but
-> Byssus has not had a release or an external security review yet. See
-> [docs/TODO.md](docs/TODO.md) for remaining work.
+> **Status: pre-release.** Byssus is a young project. The daemon and CLI are
+> functional and tested, but it has not had a release or wide deployment, and
+> configuration and behavior may still change. See
+> [docs/TODO.md](docs/TODO.md) for remaining work and [SECURITY.md](SECURITY.md)
+> for reporting issues.
 
 ## How it works
 
